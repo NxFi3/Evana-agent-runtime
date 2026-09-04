@@ -7,7 +7,7 @@ from typing import Optional
 import numpy as np
 
 from src.Utils.logger import get_logger
-from src.Memory.MemoryItems import MemoryItem
+from Memory.MemoryItem import MemoryItem
 
 
 logger = get_logger("DBM")

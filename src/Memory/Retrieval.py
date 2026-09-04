@@ -1,4 +1,4 @@
-from src.Memory.MemoryItems import MemoryItem
+from Memory.MemoryItem import MemoryItem
 from src.Engine.EmbeddingModel import EmbeddingModel
 from src.Engine.RerankerModel import Reranker
 from src.Utils.logger import get_logger
