@@ -15,7 +15,7 @@ class Compactor:
         if len(context) <= max_length:
             return context
 
-        compacted_context = self.llm_provider.generate(BuildCompactorPrompt(context, max_length))
+        compacted_context = self.llm_provider.generate(BuildCompactorPrompt(context, max_length)).get('response', '')
         
         if len(compacted_context) > max_length:
             self.logger.warning("Compacted context exceeds max length. Truncating.")

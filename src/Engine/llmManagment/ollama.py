@@ -28,11 +28,8 @@ class OllamaProvider:
             else:
                 result = ollama.generate(model=self.model_name,prompt=text,options=self.options)
 
-            return str(result.get(
-                "response",
-                "NO_RESPONSE")
-            )
+            return result
 
         except Exception as e:
             logger.error(f"Generation error: {e}")
-            return "GENERATION_ERROR"
+            return {}
