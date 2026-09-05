@@ -3,10 +3,11 @@
 from typing import List
 from src.Utils.logger import get_logger 
 from src.Memory.Retrieval import Retrieval
-from src.Engine.llmManagment import LlmProvider
+from src.Engine.llmManagment.LlmProvider import LlmProvider
 from src.Memory.DatabaseManager import DBManager
 from src.Memory.MemoryEvent import MemoryEvent
-
+from src.Memory.MemoryPrompt import build_decision_prompt 
+from src.Memory.MemoryParser import MemoryParser
 
 logger = get_logger('[MCONSOLIDATOR]')
 
@@ -24,18 +25,28 @@ SOURCE_SCORES = {
 }
 
 class MemoryConsolidator:
-    def __init__(self,llmprovider:LlmProvider,database:DBManager,retrieval:Retrieval,typescores=TYPE_SCORES,source_scores=SOURCE_SCORES) -> None:
-        self.LlmProvider = llmprovider 
+    def __init__(
+    self,
+    llmprovider: LlmProvider,
+    database: DBManager,
+    retrieval: Retrieval,
+    parser: MemoryParser,
+    typescores=TYPE_SCORES,
+    source_scores=SOURCE_SCORES
+) -> None:
+        self.llmprovider = llmprovider
         self.db = database
         self.retrieval = retrieval
         self.type_scores = typescores
         self.source_scores = source_scores
-    def FirstStage(self,data:List[MemoryEvent]):
-        data = list(filter(lambda data: data.content is not None and data.content.strip() != "" ,data))
-        return data
-        
-    def Ranker(self, data: List[MemoryEvent]):
+        self.parser = parser
+    def _Candidates(self, data: List[MemoryEvent]):
         ranked = []
+
+        data = [
+            event for event in data
+            if event.content is not None and event.content.strip() != ""
+        ]
 
         for item in data:
             type_score = self.type_scores.get(
@@ -54,12 +65,9 @@ class MemoryConsolidator:
 
         ranked.sort(key=lambda x: x[1], reverse=True)
 
-        return ranked
-    def secondStage(self, data):
         results = []
 
-        for event, rank_score in data:
-
+        for event, rank_score in ranked:
             nearest = self.retrieval.get_nearest_memory(
                 event.content
             )
@@ -82,12 +90,22 @@ class MemoryConsolidator:
             })
 
         return results
-
+            
+    def _ContextBuild(self, data: list):
+        context = ''.join(
+            f"Event: {item['event']}\n"
+            f"Score: {item['rank_score']}\n"
+            f"Similarity: {item['related_memory']['similarity'] if item['related_memory'] else None}\n\n"
+            for item in data
+        )
+        return context
+        
     def process(self, cache: List[MemoryEvent]):
-        stage_one = self.FirstStage(cache)
+        candidates = self._Candidates(cache)
+        context = self._ContextBuild(candidates)
+        Prompt = build_decision_prompt(context)
+        response = self.llmprovider.generate(Prompt)
+        parsed = self.parser.parse(response)
+        return parsed
 
-        ranked = self.Ranker(stage_one)
 
-        second_stage = self.secondStage(ranked)
-
-        return second_stage

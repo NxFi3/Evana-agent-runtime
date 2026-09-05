@@ -28,9 +28,9 @@ class OllamaProvider:
             else:
                 result = ollama.generate(model=self.model_name,prompt=text,options=self.options)
 
-            return result.get(
+            return str(result.get(
                 "response",
-                "NO_RESPONSE"
+                "NO_RESPONSE")
             )
 
         except Exception as e:
