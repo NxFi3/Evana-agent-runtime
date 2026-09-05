@@ -21,7 +21,7 @@ class OllamaProvider:
         logger.info(f"Using Ollama model: {self.model_name}")
     def generate(self, text: str, image: np.ndarray = None):
         try:
-            logger.info("[LLM] Generating text")
+            logger.info("Generating text")
 
             if image is not None:
                 result = ollama.generate(model=self.model_name,prompt=text,options=self.options,images=image)
@@ -34,5 +34,5 @@ class OllamaProvider:
             )
 
         except Exception as e:
-            logger.error(f"[LLM] Generation error: {e}")
+            logger.error(f"Generation error: {e}")
             return "GENERATION_ERROR"
