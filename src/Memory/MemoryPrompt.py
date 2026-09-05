@@ -36,8 +36,7 @@ Example:
 [
   {{
     "decision": "CREATE",
-    "content": "The user is building an AI agent runtime called Evana.",
-    "event_id": 42
+    "content": "The user is building an AI agent runtime called Evana."
   }}
 ]
 

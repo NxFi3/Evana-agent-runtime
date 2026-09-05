@@ -9,7 +9,7 @@ logger = get_logger('[CACHE]')
 
 class MemoryCache:
     def __init__(self) -> None:
-        self.cache_path = 'MemoryTemporalCache.pkl' # Hard Path
+        self.cache_path = 'data/MemoryTemporalCache.pkl' # Hard Path
         self.database = self._readpath()
         self.counts = len(self.database)
     def _readpath(self):
@@ -55,7 +55,7 @@ class MemoryCache:
         return len(self.database) == 0
     def should_consolidate(self):
         if len(self.database) >=100:
-            logger.warning(f'Cache OverFlow Require consolidation')
+            logger.info(f'Cache OverFlow Require consolidation')
             return True
         else:
             return False        

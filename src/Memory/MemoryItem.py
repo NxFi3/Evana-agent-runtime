@@ -16,3 +16,4 @@ class MemoryItem:
     count: int
     importance: float
     deleted: int
+    raw_score: Optional[float] = None

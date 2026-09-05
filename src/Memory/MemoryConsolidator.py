@@ -101,6 +101,7 @@ class MemoryConsolidator:
         return context
         
     def process(self, cache: List[MemoryEvent]):
+        """ returns a list of memory objects to be stored in the database """
         candidates = self._Candidates(cache)
         context = self._ContextBuild(candidates)
         Prompt = build_decision_prompt(context)

@@ -1,5 +1,3 @@
-#src/Memory/MemoryParser.py
-
 import json
 
 
@@ -41,8 +39,7 @@ class MemoryParser:
     def _validate_item(self, item: dict, index: int) -> dict:
         required_fields = {
             "decision",
-            "content",
-            "event_id"
+            "content"
         }
 
         if set(item.keys()) != required_fields:
@@ -71,15 +68,7 @@ class MemoryParser:
                 f"'content' at index {index} cannot be empty."
             )
 
-        event_id = item["event_id"]
-
-        if isinstance(event_id, bool) or not isinstance(event_id, int):
-            raise ValueError(
-                f"'event_id' at index {index} must be an integer."
-            )
-
         return {
             "decision": self.VALID_DECISION,
-            "content": content,
-            "event_id": event_id
+            "content": content
         }
