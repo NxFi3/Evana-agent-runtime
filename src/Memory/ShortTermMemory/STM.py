@@ -1,4 +1,4 @@
-#src/Memory/ShortTermMemory/stm.py
+#src/Memory/ShortTermMemory/STM.py
 
 import os
 import pickle
