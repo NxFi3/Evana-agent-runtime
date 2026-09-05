@@ -170,3 +170,6 @@ class MemoryManager:
     def saveall(self):
 
         return self.stm.save()
+    def get_previous_events(self,k: int = 10):
+
+        return self.stm.getPreviousSteps(k)
