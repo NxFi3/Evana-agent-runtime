@@ -24,6 +24,7 @@ class EmbeddingModel:
             logger.warning(f"Trying default model: {self.default_model}")
             self.model = SentenceTransformer(self.default_model)
             self.dimension = (self.model.get_sentence_embedding_dimension())
+    
     def encode(self, text: str) -> np.ndarray:
 
         return self.model.encode(text,normalize_embeddings=True).reshape(1,-1)

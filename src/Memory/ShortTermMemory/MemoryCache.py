@@ -1,30 +1,53 @@
-#src/Memory/MemoryCache.py
+#src/Memory/ShortTermMemory/MemoryCache.py
 
+import os
+import pickle
 from src.Utils.logger import get_logger
 from src.Memory.MemoryEvent import MemoryEvent
-import pickle 
-import os 
+
+
 logger = get_logger('[CACHE]')
 
 
 class MemoryCache:
-    def __init__(self) -> None:
-        self.cache_path = 'data/MemoryTemporalCache.pkl' # Hard Path
+
+    def __init__(self, cache_path: str = 'data/MemoryTemporalCache.pkl'):
+
+        self.cache_path = cache_path
         self.database = self._readpath()
         self.counts = len(self.database)
+
     def _readpath(self):
+
         try:
-            if os.path.exists(self.cache_path):
-                with open(self.cache_path,'rb') as f:
-                    return pickle.load(f)
-            else:
+
+            if not os.path.exists(self.cache_path):
                 return []
+
+            with open(self.cache_path, 'rb') as f:
+                database = pickle.load(f)
+
+            if not isinstance(database, list):
+                logger.warning('Invalid Cache Database Format')
+                return []
+
+            return [
+                item for item in database
+                if isinstance(item, MemoryEvent)
+            ]
+
         except Exception as e:
-            logger.error(f'Error While Reading Cache : {e} Cannot Load Pervious Cache File')
-            return [] 
-        
+
+            logger.error(
+                f'Error While Reading Cache: {e}'
+            )
+
+            return []
+
     def SaveTemporalCache(self):
+
         try:
+
             directory = os.path.dirname(self.cache_path)
 
             if directory:
@@ -36,44 +59,65 @@ class MemoryCache:
             return True
 
         except Exception as e:
-            logger.error(f'Cant Save TemporalCache Error: {e}')
+
+            logger.error(
+                f'Cant Save TemporalCache Error: {e}'
+            )
+
             return False
-        
+
     def flush(self):
-        self.database = []
-        self.counts = 0
 
         try:
+
+            self.database = []
+            self.counts = 0
+
             if os.path.exists(self.cache_path):
                 os.remove(self.cache_path)
+
             return True
+
         except Exception as e:
-            logger.error(f'Cannot Flush Cache From Disk: {e}')
+
+            logger.error(
+                f'Cannot Flush Cache From Disk: {e}'
+            )
+
             return False
-    
+
     def is_empty(self):
+
         return len(self.database) == 0
+
     def should_consolidate(self):
-        if len(self.database) >=100:
-            logger.info(f'Cache OverFlow Require consolidation')
-            return True
-        else:
-            return False        
+
+        return len(self.database) >= 100
+
     def getlen(self):
 
         return len(self.database)
-    
-    def add(self,Memory:MemoryEvent):
-        if not isinstance(Memory,MemoryEvent):
-            logger.warning(f'invalid Format Type {type(Memory)}')
-            return False 
-        
-        self.database.append(Memory)
+
+    def add(self, memory: MemoryEvent):
+
+        if not isinstance(memory, MemoryEvent):
+
+            logger.warning(
+                f'Invalid Format Type: {type(memory)}'
+            )
+
+            return False
+
+        self.database.append(memory)
         self.counts = len(self.database)
-        if self.counts % 10 ==0:
-            self.SaveTemporalCache()
-            logger.info('Saving Cache')
+
+        if self.counts % 10 == 0:
+
+            if self.SaveTemporalCache():
+                logger.info('Saving Cache')
+
         return True
-    
+
     def getall(self):
+
         return self.database

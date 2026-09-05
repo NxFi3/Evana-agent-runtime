@@ -1,5 +1,3 @@
-# src/Memory/DatabaseManager.py
-
 import sqlite3
 import time
 from typing import Optional
@@ -97,8 +95,6 @@ class DBManager:
                 ON items(created_at)
             """)
 
-            conn.commit()
-
             self._sync_fts(cursor)
 
             conn.commit()
@@ -121,37 +117,47 @@ class DBManager:
 
             conn.close()
 
- 
     def _sync_fts(self, cursor):
 
-        cursor.execute(
-            "SELECT COUNT(*) FROM items"
-        )
+        cursor.execute("""
+            SELECT id, value
+            FROM items
+            ORDER BY id
+        """)
 
-        item_count = cursor.fetchone()[0]
+        items = cursor.fetchall()
 
-        cursor.execute(
-            "SELECT COUNT(*) FROM items_fts"
-        )
+        cursor.execute("""
+            SELECT rowid, value
+            FROM items_fts
+            ORDER BY rowid
+        """)
 
-        fts_count = cursor.fetchone()[0]
+        fts_items = cursor.fetchall()
 
-        if item_count == fts_count:
+        if items == fts_items:
             return
 
         logger.info(
             "Synchronizing FTS5 index..."
         )
 
-        cursor.execute(
-            "DELETE FROM items_fts"
-        )
-
         cursor.execute("""
-            INSERT INTO items_fts(rowid, value)
-            SELECT id, value
-            FROM items
+            DELETE FROM items_fts
         """)
+
+        if items:
+
+            cursor.executemany(
+                """
+                INSERT INTO items_fts(
+                    rowid,
+                    value
+                )
+                VALUES (?, ?)
+                """,
+                items
+            )
 
     def add_item(
         self,
@@ -161,6 +167,20 @@ class DBManager:
         importance: float = 0.3,
         graph: Optional[np.ndarray] = None
     ) -> Optional[int]:
+
+        if not isinstance(value, str):
+            logger.warning(
+                f"Invalid value type: {type(value)}"
+            )
+            return None
+
+        value = value.strip()
+
+        if not value:
+            logger.warning(
+                "Cannot add empty memory value"
+            )
+            return None
 
         conn = self._connect()
         cursor = conn.cursor()
@@ -213,6 +233,10 @@ class DBManager:
 
             item_id = cursor.lastrowid
 
+            if item_id is None:
+                conn.rollback()
+                return None
+
             cursor.execute("""
                 INSERT INTO items_fts(
                     rowid,
@@ -230,7 +254,7 @@ class DBManager:
                 f"Added memory item: {item_id}"
             )
 
-            return item_id
+            return int(item_id)
 
         except Exception as e:
 
@@ -249,7 +273,8 @@ class DBManager:
     def get_by_id(
         self,
         item_id: int,
-        embedding_dtype=np.float32
+        embedding_dtype=np.float32,
+        include_deleted: bool = False
     ) -> Optional[MemoryItem]:
 
         conn = self._connect()
@@ -257,7 +282,16 @@ class DBManager:
 
         try:
 
-            cursor.execute("""
+            deleted_filter = ""
+
+            if not include_deleted:
+
+                deleted_filter = """
+                    AND deleted = 0
+                """
+
+            cursor.execute(
+                f"""
                 SELECT
                     id,
                     graph,
@@ -271,7 +305,10 @@ class DBManager:
                     deleted
                 FROM items
                 WHERE id = ?
-            """, (item_id,))
+                {deleted_filter}
+                """,
+                (item_id,)
+            )
 
             row = cursor.fetchone()
 
@@ -295,7 +332,6 @@ class DBManager:
 
             conn.close()
 
-
     def get_by_ids(
         self,
         item_ids: list[int],
@@ -305,6 +341,11 @@ class DBManager:
 
         if not item_ids:
             return []
+
+        item_ids = [
+            int(item_id)
+            for item_id in item_ids
+        ]
 
         conn = self._connect()
         cursor = conn.cursor()
@@ -376,7 +417,6 @@ class DBManager:
 
             conn.close()
 
-
     def search_fts(
         self,
         query: str,
@@ -384,10 +424,18 @@ class DBManager:
         include_deleted: bool = False
     ) -> list[MemoryItem]:
 
+        if not isinstance(query, str):
+            return []
+
         query = query.strip()
 
         if not query:
             return []
+
+        limit = max(
+            int(limit),
+            1
+        )
 
         conn = self._connect()
         cursor = conn.cursor()
@@ -507,7 +555,6 @@ class DBManager:
 
         return cursor.fetchall()
 
-
     def update_item(
         self,
         item_id: int,
@@ -528,8 +575,15 @@ class DBManager:
             updates = []
             params = []
 
-
             if new_value is not None:
+
+                if not isinstance(new_value, str):
+                    return False
+
+                new_value = new_value.strip()
+
+                if not new_value:
+                    return False
 
                 updates.append(
                     "value = ?"
@@ -548,7 +602,6 @@ class DBManager:
                     item_id
                 ))
 
-
             if new_graph is not None:
 
                 updates.append(
@@ -562,7 +615,6 @@ class DBManager:
                     ).tobytes()
                 )
 
-
             if new_mem_type is not None:
 
                 updates.append(
@@ -573,7 +625,6 @@ class DBManager:
                     new_mem_type
                 )
 
-
             if new_importance is not None:
 
                 updates.append(
@@ -583,7 +634,6 @@ class DBManager:
                 params.append(
                     float(new_importance)
                 )
-
 
             if new_embedding is not None:
 
@@ -614,18 +664,16 @@ class DBManager:
                     "count = count + 1"
                 )
 
-            if updates:
-
-                updates.append(
-                    "last_access = ?"
-                )
-
-                params.append(
-                    time.time()
-                )
-
             if not updates:
                 return False
+
+            updates.append(
+                "last_access = ?"
+            )
+
+            params.append(
+                time.time()
+            )
 
             params.append(
                 item_id
@@ -686,6 +734,7 @@ class DBManager:
                     last_access = ?,
                     count = count + 1
                 WHERE id = ?
+                  AND deleted = 0
             """, (
                 time.time(),
                 item_id
@@ -723,22 +772,42 @@ class DBManager:
             try:
 
                 cursor.execute("""
+                    SELECT id
+                    FROM items
+                    WHERE id = ?
+                """, (
+                    item_id,
+                ))
+
+                exists = cursor.fetchone()
+
+                if exists is None:
+
+                    conn.rollback()
+
+                    return False
+
+                cursor.execute("""
                     DELETE FROM items
                     WHERE id = ?
-                """, (item_id,))
-
-                deleted = (
-                    cursor.rowcount > 0
-                )
+                """, (
+                    item_id,
+                ))
 
                 cursor.execute("""
                     DELETE FROM items_fts
                     WHERE rowid = ?
-                """, (item_id,))
+                """, (
+                    item_id,
+                ))
 
                 conn.commit()
 
-                return deleted
+                logger.debug(
+                    f"Hard deleted memory item: {item_id}"
+                )
+
+                return True
 
             except Exception as e:
 
@@ -858,6 +927,7 @@ class DBManager:
                 SELECT COUNT(*)
                 FROM items
                 WHERE embedding IS NOT NULL
+                  AND deleted = 0
             """)
 
             items_with_embedding = (
@@ -868,6 +938,7 @@ class DBManager:
                 SELECT COUNT(*)
                 FROM items
                 WHERE graph IS NOT NULL
+                  AND deleted = 0
             """)
 
             items_with_graph = (
@@ -919,12 +990,12 @@ class DBManager:
         graph = (
             np.frombuffer(
                 row[1],
-                dtype=embedding_dtype
+                dtype=np.float32
             ).copy()
             if row[1] is not None
             else np.array(
                 [],
-                dtype=embedding_dtype
+                dtype=np.float32
             )
         )
 
@@ -947,7 +1018,7 @@ class DBManager:
         )
 
         return MemoryItem(
-            id=row[0],
+            id=int(row[0]),
             graph=graph,
             mem_type=row[2],
             value=row[3],
@@ -959,4 +1030,3 @@ class DBManager:
             deleted=row[9],
             raw_score=raw_score
         )
-

@@ -27,39 +27,27 @@ class Retrieval:
         self.EmbeddingModel = EmbeddingModel
         self.Reranker = Reranker
         self.db = DataBase
-
         self.dimension = self.EmbeddingModel.dimension
         self.index_path = index_path
-
         self.index = self._create_empty_index()
-
         self._load_or_build_index()
-
 
     def _create_empty_index(self):
 
         return faiss.IndexIDMap2(
-            faiss.IndexFlatIP(
-                self.dimension
-            )
+            faiss.IndexFlatIP(self.dimension)
         )
-
 
     def _load_or_build_index(self):
 
-        if not os.path.exists(
-            self.index_path
-        ):
-
+        if not os.path.exists(self.index_path):
             self._build_index()
-
             return
 
         try:
 
             logger.info(
-                f"Loading FAISS index: "
-                f"{self.index_path}"
+                f"Loading FAISS index: {self.index_path}"
             )
 
             loaded_index = faiss.read_index(
@@ -69,12 +57,10 @@ class Retrieval:
             if loaded_index.d != self.dimension:
 
                 logger.warning(
-                    "FAISS dimension mismatch. "
-                    "Rebuilding index."
+                    "FAISS dimension mismatch. Rebuilding index."
                 )
 
                 self._build_index()
-
                 return
 
             self.index = loaded_index
@@ -92,7 +78,6 @@ class Retrieval:
 
             self._build_index()
 
-
     def _build_index(self):
 
         logger.info(
@@ -105,12 +90,7 @@ class Retrieval:
 
             if not records:
 
-                logger.info(
-                    "Database contains no embeddings."
-                )
-
                 self.index = self._create_empty_index()
-
                 return
 
             ids = []
@@ -135,22 +115,12 @@ class Retrieval:
 
                     continue
 
-                ids.append(
-                    int(memory_id)
-                )
-
-                embeddings.append(
-                    embedding[0]
-                )
+                ids.append(int(memory_id))
+                embeddings.append(embedding[0])
 
             if not embeddings:
 
-                logger.warning(
-                    "No valid embeddings found."
-                )
-
                 self.index = self._create_empty_index()
-
                 return
 
             embeddings = np.asarray(
@@ -170,7 +140,10 @@ class Retrieval:
                 ids
             )
 
-            self._save_index()
+            if not self._save_index():
+                raise RuntimeError(
+                    "Failed to save rebuilt FAISS index."
+                )
 
             logger.info(
                 f"FAISS index built. "
@@ -185,7 +158,6 @@ class Retrieval:
 
             raise
 
-
     def _save_index(self):
 
         try:
@@ -195,7 +167,6 @@ class Retrieval:
             )
 
             if directory:
-
                 os.makedirs(
                     directory,
                     exist_ok=True
@@ -206,10 +177,7 @@ class Retrieval:
                 self.index_path
             )
 
-            logger.debug(
-                f"FAISS index saved: "
-                f"{self.index_path}"
-            )
+            return True
 
         except Exception as e:
 
@@ -217,6 +185,7 @@ class Retrieval:
                 f"Failed to save FAISS index: {e}"
             )
 
+            return False
 
     def _validate_embedding(
         self,
@@ -238,7 +207,6 @@ class Retrieval:
 
         return embedding
 
-
     def add(
         self,
         memory_id: int,
@@ -254,34 +222,44 @@ class Retrieval:
 
             return False
 
-        embedding = self._validate_embedding(
-            embedding
-        )
-
-        memory_id_array = np.asarray(
-            [int(memory_id)],
-            dtype=np.int64
-        )
-
         try:
+
+            embedding = self._validate_embedding(
+                embedding
+            )
+
+            memory_id_array = np.asarray(
+                [int(memory_id)],
+                dtype=np.int64
+            )
 
             self.index.remove_ids(
                 memory_id_array
             )
 
-        except Exception:
+            self.index.add_with_ids(
+                embedding,
+                memory_id_array
+            )
 
-            pass
+            if not self._save_index():
 
-        self.index.add_with_ids(
-            embedding,
-            memory_id_array
-        )
+                self.index.remove_ids(
+                    memory_id_array
+                )
 
-        self._save_index()
+                return False
 
-        return True
+            return True
 
+        except Exception as e:
+
+            logger.error(
+                f"Failed to add memory "
+                f"{memory_id}: {e}"
+            )
+
+            return False
 
     def remove(
         self,
@@ -297,11 +275,10 @@ class Retrieval:
                 )
             )
 
-            self._save_index()
+            if not self._save_index():
+                return False
 
-            return bool(
-                removed > 0
-            )
+            return bool(removed > 0)
 
         except Exception as e:
 
@@ -312,17 +289,13 @@ class Retrieval:
 
             return False
 
-
     def _dense_search(
         self,
         query_embedding: np.ndarray,
         limit: int = 100
     ) -> List[Dict[str, Any]]:
 
-        if self.index.ntotal == 0:
-            return []
-
-        if limit <= 0:
+        if self.index.ntotal == 0 or limit <= 0:
             return []
 
         query_embedding = self._validate_embedding(
@@ -341,14 +314,8 @@ class Retrieval:
 
         results = []
 
-        for rank, (
-            memory_id,
-            distance
-        ) in enumerate(
-            zip(
-                ids[0],
-                distances[0]
-            ),
+        for rank, (memory_id, distance) in enumerate(
+            zip(ids[0], distances[0]),
             start=1
         ):
 
@@ -363,7 +330,6 @@ class Retrieval:
 
         return results
 
-
     def get_nearest_memory(
         self,
         query: str
@@ -375,10 +341,8 @@ class Retrieval:
         if self.index.ntotal == 0:
             return None
 
-        query_embedding = (
-            self.EmbeddingModel.encode(
-                f"query: {query}"
-            )
+        query_embedding = self.EmbeddingModel.encode(
+            f"query: {query}"
         )
 
         query_embedding = self._validate_embedding(
@@ -390,20 +354,15 @@ class Retrieval:
             1
         )
 
-        memory_id = int(
-            indices[0][0]
-        )
+        memory_id = int(indices[0][0])
 
         if memory_id == -1:
             return None
 
         return {
             "id": memory_id,
-            "similarity": float(
-                distances[0][0]
-            )
+            "similarity": float(distances[0][0])
         }
-
 
     def _compute_rrf(
         self,
@@ -425,13 +384,13 @@ class Retrieval:
 
             merged[item.id] = {
                 "item": item,
-                "rrf_score": 1.0 / (
-                    k_rrf + rank
-                ),
+                "rrf_score": 1.0 / (k_rrf + rank),
                 "bm25_rank": rank,
                 "embedding_rank": None,
                 "embedding_distance": None
             }
+
+        dense_only = []
 
         for result in dense_results:
 
@@ -443,34 +402,45 @@ class Retrieval:
 
             if memory_id in merged:
 
-                merged[memory_id][
-                    "rrf_score"
-                ] += dense_score
+                merged[memory_id]["rrf_score"] += dense_score
+                merged[memory_id]["embedding_rank"] = result["rank"]
+                merged[memory_id]["embedding_distance"] = result["distance"]
 
-                merged[memory_id][
-                    "embedding_rank"
-                ] = result["rank"]
+            else:
 
-                merged[memory_id][
-                    "embedding_distance"
-                ] = result["distance"]
+                dense_only.append(result)
 
-                continue
+        if dense_only:
 
-            item = self.db.get_by_id(
-                memory_id
-            )
+            ids = [
+                result["id"]
+                for result in dense_only
+            ]
 
-            if item is None:
-                continue
+            items = self.db.get_by_ids(ids)
 
-            merged[memory_id] = {
-                "item": item,
-                "rrf_score": dense_score,
-                "bm25_rank": None,
-                "embedding_rank": result["rank"],
-                "embedding_distance": result["distance"]
+            items_by_id = {
+                item.id: item
+                for item in items
             }
+
+            for result in dense_only:
+
+                memory_id = result["id"]
+                item = items_by_id.get(memory_id)
+
+                if item is None:
+                    continue
+
+                merged[memory_id] = {
+                    "item": item,
+                    "rrf_score": 1.0 / (
+                        k_rrf + result["rank"]
+                    ),
+                    "bm25_rank": None,
+                    "embedding_rank": result["rank"],
+                    "embedding_distance": result["distance"]
+                }
 
         ranked = sorted(
             merged.values(),
@@ -479,7 +449,6 @@ class Retrieval:
         )
 
         return ranked[:limit]
-
 
     def Retrieve(
         self,
@@ -493,10 +462,8 @@ class Retrieval:
         if top_k <= 0:
             return []
 
-        query_embedding = (
-            self.EmbeddingModel.encode(
-                f"query: {query}"
-            )
+        query_embedding = self.EmbeddingModel.encode(
+            f"query: {query}"
         )
 
         bm25_results = self.db.search_fts(
@@ -509,16 +476,12 @@ class Retrieval:
             limit=100
         )
 
-        if (
-            not bm25_results
-            and not dense_results
-        ):
-
+        if not bm25_results and not dense_results:
             return []
 
         rrf_results = self._compute_rrf(
-            bm25_results=bm25_results,
-            dense_results=dense_results,
+            bm25_results,
+            dense_results,
             k_rrf=60,
             limit=20
         )
@@ -536,9 +499,7 @@ class Retrieval:
             documents=documents
         )
 
-        if len(reranker_scores) != len(
-            rrf_results
-        ):
+        if len(reranker_scores) != len(rrf_results):
 
             raise RuntimeError(
                 "Reranker returned an invalid "
@@ -550,9 +511,7 @@ class Retrieval:
             reranker_scores
         ):
 
-            result["reranker_score"] = float(
-                score
-            )
+            result["reranker_score"] = float(score)
 
         rrf_results.sort(
             key=lambda x: x["reranker_score"],
@@ -560,4 +519,3 @@ class Retrieval:
         )
 
         return rrf_results[:top_k]
-
