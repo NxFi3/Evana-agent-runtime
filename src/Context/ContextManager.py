@@ -48,10 +48,9 @@ class ContextManager:
             return self.context_builder.context_window.prompt()
         current_step = STM_Result[-1].step
         if self.compacted_trajectory is None:
-            previous_events = STM_Result[:-1]
-            self.context_builder.build_context(User_input,previous_events)
+            self.context_builder.build_context(User_input, STM_Result)
 
-            trajectory = (self.context_builder.context_window.trajectory)
+            trajectory = self.context_builder.context_window.trajectory
         else:
             new_events = [event for event in STM_Result if (event.step > self.compacted_until_step and event.event_type.lower() != "user_input")]
 
