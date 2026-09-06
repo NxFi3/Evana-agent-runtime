@@ -1,9 +1,0 @@
-[17:58:03] [WARNING] [[CONTEXTBUILDER]] → Tool instructions file not found at /instructions/ToolInstructions.md.
-[17:58:03] [WARNING] [[CONTEXTBUILDER]] → Developer instructions file not found at /instructions/DeveloperInstructions.md.
-[17:58:03] [WARNING] [[TOKENBUDGET]] → Token budget exceeded. Remaining tokens: -50. Safe margin: 100
-[17:58:03] [WARNING] [[CONTEXTMANAGER]] → Context budget exceeded at step 100.Remaining tokens: -50.Starting compaction.
-[17:58:03] [INFO] [[CONTEXTMANAGER]] → Context compacted successfully at step 100.
-[17:59:42] [WARNING] [[CONTEXTBUILDER]] → Tool instructions file not found at /instructions/ToolInstructions.md.
-[17:59:42] [WARNING] [[CONTEXTBUILDER]] → Developer instructions file not found at /instructions/DeveloperInstructions.md.
-[18:02:29] [WARNING] [[CONTEXTBUILDER]] → Tool instructions file not found at /instructions/ToolInstructions.md.
-[18:02:29] [WARNING] [[CONTEXTBUILDER]] → Developer instructions file not found at /instructions/DeveloperInstructions.md.
