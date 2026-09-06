@@ -30,7 +30,7 @@ class TokenBudget:
 
     def remaining_budget(self, ModelResponse: Dict[str, Any]) -> int:
         try:
-            used_tokens = ModelResponse.get("prompt_eval_count", 0)
+            used_tokens = ModelResponse.get("prompt_eval_count", 0) + ModelResponse.get('eval_count',0)
 
             if self.budget < 0:
                 logger.warning(
