@@ -16,5 +16,10 @@ class LlmProvider:
             self.model = OllamaProvider(self.llm_config)
         else:
             raise ValueError(f"Unsupported LLM provider: {self.provider_type}")
+    def show_model_info(self):
+        if self.provider_type == "ollama":
+            return self.model.show_model_info()
+        else:
+            raise ValueError(f"Unsupported LLM provider: {self.provider_type}")
     def generate(self,text: str,image: np.ndarray = None):
         return self.model.generate(text, image)

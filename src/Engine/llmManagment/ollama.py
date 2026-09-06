@@ -17,8 +17,17 @@ class OllamaProvider:
         self.options = config.get("llm-options") or {
             "temperature": 0.7,
             "repetition_penalty": 1.1,
+            "num_ctx": 34000
         }
         logger.info(f"Using Ollama model: {self.model_name}")
+    def show_model_info(self):
+        try:
+            model_info = ollama.show(self.model_name)
+            logger.info(f"Model info: {model_info}")
+            return model_info
+        except Exception as e:
+            logger.error(f"Error fetching model info: {e}")
+            return None
     def generate(self, text: str, image: np.ndarray = None):
         try:
             logger.info("Generating text")
