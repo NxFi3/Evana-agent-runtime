@@ -3,7 +3,7 @@ from pathlib import Path
 from src.Tools.Tool import Tool
 from src.Tools.ToolResult import ToolResult
 class ReadFile(Tool):
-    name = 'read_file'
+    name = 'Read'
     description = (
     "Read a file or list the contents of a directory. "
     "For files, optional line ranges can be specified.")

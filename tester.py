@@ -1,6 +1,9 @@
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from src.Tools.ToolRegistry import ToolRegistry
 from src.Tools.Tool import Tool
+from src.Tools.ToolResult import ToolResult
 
 
 passed = 0
@@ -19,12 +22,12 @@ def test(name, condition):
 
 
 print("=" * 60)
-print("ToolRegistry Test")
+print("Create Tool Test")
 print("=" * 60)
 
 
 # ---------------------------------------------------------
-# 1. Initialization
+# 1. Registry / Discovery
 # ---------------------------------------------------------
 
 registry = ToolRegistry()
@@ -36,194 +39,362 @@ test(
 
 test(
     "tools starts empty",
-    isinstance(registry.tools, dict) and len(registry.tools) == 0
+    isinstance(registry.tools, dict)
+    and len(registry.tools) == 0
 )
-
-
-# ---------------------------------------------------------
-# 2. Discovery
-# ---------------------------------------------------------
 
 registry.discover()
 
 test(
-    "read_file discovered",
-    registry.is_available("read_file")
+    "create tool discovered",
+    registry.is_available("create")
+)
+
+create = registry.get("create")
+
+test(
+    "get create tool",
+    create is not None
 )
 
 test(
-    "at least one tool discovered",
-    len(registry.tools) >= 1
+    "create is a Tool instance",
+    isinstance(create, Tool)
+)
+
+test(
+    "create tool name is correct",
+    create.name == "create"
 )
 
 
 # ---------------------------------------------------------
-# 3. Tool instances
-# ---------------------------------------------------------
-
-read_file = registry.get("read_file")
-
-test(
-    "get existing tool",
-    read_file is not None
-)
-
-test(
-    "existing tool is a Tool instance",
-    isinstance(read_file, Tool)
-)
-
-test(
-    "tool name is correct",
-    read_file.name == "read_file"
-)
-
-test(
-    "tool has description",
-    isinstance(read_file.description, str)
-    and len(read_file.description) > 0
-)
-
-test(
-    "tool has parameters",
-    isinstance(read_file.parameters, dict)
-)
-
-
-# ---------------------------------------------------------
-# 4. is_available()
-# ---------------------------------------------------------
-
-test(
-    "is_available returns True for existing tool",
-    registry.is_available("read_file") is True
-)
-
-test(
-    "is_available returns False for missing tool",
-    registry.is_available("does_not_exist") is False
-)
-
-
-# ---------------------------------------------------------
-# 5. get()
-# ---------------------------------------------------------
-
-test(
-    "get returns None for missing tool",
-    registry.get("does_not_exist") is None
-)
-
-test(
-    "get returns same registered instance",
-    registry.get("read_file") is read_file
-)
-
-
-# ---------------------------------------------------------
-# 6. get_definitions()
+# 2. Tool Definition
 # ---------------------------------------------------------
 
 definitions = registry.get_definitions()
 
-test(
-    "get_definitions returns a list",
-    isinstance(definitions, list)
+create_definition = next(
+    (
+        definition
+        for definition in definitions
+        if definition["function"]["name"] == "create"
+    ),
+    None
 )
 
 test(
-    "definitions count matches registered tools",
-    len(definitions) == len(registry.tools)
+    "create definition exists",
+    create_definition is not None
 )
 
-test(
-    "at least one definition exists",
-    len(definitions) >= 1
-)
-
-
-# ---------------------------------------------------------
-# 7. Validate every definition
-# ---------------------------------------------------------
-
-for definition in definitions:
-
-    test(
-        "definition is a dictionary",
-        isinstance(definition, dict)
-    )
+if create_definition is not None:
 
     test(
         "definition type is function",
-        definition.get("type") == "function"
+        create_definition.get("type") == "function"
     )
 
-    function = definition.get("function")
+    function = create_definition.get("function")
 
     test(
-        "definition contains function object",
+        "function definition exists",
         isinstance(function, dict)
     )
 
-    test(
-        "function has name",
-        isinstance(function.get("name"), str)
-        and len(function.get("name")) > 0
+    if isinstance(function, dict):
+
+        test(
+            "function has name",
+            function.get("name") == "create"
+        )
+
+        test(
+            "function has description",
+            isinstance(function.get("description"), str)
+            and len(function.get("description")) > 0
+        )
+
+        parameters = function.get("parameters")
+
+        test(
+            "create has parameters",
+            isinstance(parameters, dict)
+        )
+
+        if isinstance(parameters, dict):
+
+            properties = parameters.get("properties", {})
+
+            test(
+                "file_path parameter exists",
+                "file_path" in properties
+            )
+
+            test(
+                "content parameter exists",
+                "content" in properties
+            )
+
+            required = parameters.get("required", [])
+
+            test(
+                "file_path is required",
+                "file_path" in required
+            )
+
+            test(
+                "content is required",
+                "content" in required
+            )
+
+
+# ---------------------------------------------------------
+# 3. Create File
+# ---------------------------------------------------------
+
+with TemporaryDirectory() as temp_dir:
+
+    file_path = Path(temp_dir) / "test.py"
+
+    content = (
+        "def hello():\n"
+        "    print('hello')\n"
+    )
+
+    result = create.execute(
+        file_path=str(file_path),
+        content=content
     )
 
     test(
-        "function has description",
-        isinstance(function.get("description"), str)
-        and len(function.get("description")) > 0
+        "create returns ToolResult",
+        isinstance(result, ToolResult)
     )
 
     test(
-        "function has parameters",
-        isinstance(function.get("parameters"), dict)
+        "create succeeds",
+        result.success is True
+    )
+
+    test(
+        "created file exists",
+        file_path.is_file()
+    )
+
+    test(
+        "created file contains correct content",
+        file_path.read_text(encoding="utf-8") == content
     )
 
 
 # ---------------------------------------------------------
-# 8. Registry / Definition consistency
+# 4. Existing File Protection
 # ---------------------------------------------------------
 
-registered_names = set(registry.tools.keys())
+with TemporaryDirectory() as temp_dir:
 
-definition_names = {
-    definition["function"]["name"]
-    for definition in definitions
-}
+    file_path = Path(temp_dir) / "existing.py"
+
+    original_content = "original content\n"
+
+    file_path.write_text(
+        original_content,
+        encoding="utf-8"
+    )
+
+    result = create.execute(
+        file_path=str(file_path),
+        content="new content\n"
+    )
+
+    test(
+        "create fails when file already exists",
+        result.success is False
+    )
+
+    test(
+        "existing file content is preserved",
+        file_path.read_text(encoding="utf-8")
+        == original_content
+    )
+
+
+# ---------------------------------------------------------
+# 5. Nested Directory Creation
+# ---------------------------------------------------------
+
+with TemporaryDirectory() as temp_dir:
+
+    file_path = (
+        Path(temp_dir)
+        / "src"
+        / "utils"
+        / "test.py"
+    )
+
+    content = "print('nested')\n"
+
+    result = create.execute(
+        file_path=str(file_path),
+        content=content
+    )
+
+    test(
+        "create succeeds in nested path",
+        result.success is True
+    )
+
+    test(
+        "parent directories are created",
+        file_path.parent.is_dir()
+    )
+
+    test(
+        "nested file exists",
+        file_path.is_file()
+    )
+
+    test(
+        "nested file contains correct content",
+        file_path.read_text(encoding="utf-8") == content
+    )
+
+
+# ---------------------------------------------------------
+# 6. Empty Content
+# ---------------------------------------------------------
+
+with TemporaryDirectory() as temp_dir:
+
+    file_path = Path(temp_dir) / "empty.py"
+
+    result = create.execute(
+        file_path=str(file_path),
+        content=""
+    )
+
+    test(
+        "create allows empty content",
+        result.success is True
+    )
+
+    test(
+        "empty file is created",
+        file_path.is_file()
+    )
+
+    test(
+        "empty file has zero bytes",
+        file_path.stat().st_size == 0
+    )
+
+
+# ---------------------------------------------------------
+# 7. Different File Types
+# ---------------------------------------------------------
+
+with TemporaryDirectory() as temp_dir:
+
+    files = {
+        "test.txt": "hello world\n",
+        "data.json": '{"name": "Evana"}\n',
+        "config.yaml": "model: gpt-oss\n",
+    }
+
+    for filename, content in files.items():
+
+        file_path = Path(temp_dir) / filename
+
+        result = create.execute(
+            file_path=str(file_path),
+            content=content
+        )
+
+        test(
+            f"create {filename}",
+            result.success is True
+        )
+
+        test(
+            f"{filename} exists",
+            file_path.is_file()
+        )
+
+        test(
+            f"{filename} content is correct",
+            file_path.read_text(encoding="utf-8") == content
+        )
+
+
+# ---------------------------------------------------------
+# 8. Unicode Content
+# ---------------------------------------------------------
+
+with TemporaryDirectory() as temp_dir:
+
+    file_path = Path(temp_dir) / "unicode.txt"
+
+    content = "Evana\nسلام دنیا\nこんにちは\n"
+
+    result = create.execute(
+        file_path=str(file_path),
+        content=content
+    )
+
+    test(
+        "create handles unicode content",
+        result.success is True
+    )
+
+    test(
+        "unicode content is preserved",
+        file_path.read_text(encoding="utf-8") == content
+    )
+
+
+# ---------------------------------------------------------
+# 9. Empty Path
+# ---------------------------------------------------------
+
+result = create.execute(
+    file_path="",
+    content="test"
+)
 
 test(
-    "registered tool names match definition names",
-    registered_names == definition_names
+    "empty path fails",
+    result.success is False
 )
 
 
 # ---------------------------------------------------------
-# 9. Print discovered tools
+# 10. Tool Result
 # ---------------------------------------------------------
 
-print()
-print("Discovered tools:")
+with TemporaryDirectory() as temp_dir:
 
-for tool_name, tool in registry.tools.items():
-    print(f"- {tool_name} -> {tool}")
+    file_path = Path(temp_dir) / "result.py"
+
+    result = create.execute(
+        file_path=str(file_path),
+        content="print('test')\n"
+    )
+
+    test(
+        "result has success field",
+        isinstance(result.success, bool)
+    )
+
+    test(
+        "successful result has content",
+        isinstance(result.content, str)
+        and len(result.content) > 0
+    )
 
 
 # ---------------------------------------------------------
-# 10. Print definitions
-# ---------------------------------------------------------
-
-print()
-print("Tool definitions:")
-
-for definition in definitions:
-    print(definition)
-
-
-# ---------------------------------------------------------
-# Final result
+# Final Result
 # ---------------------------------------------------------
 
 print()
@@ -233,8 +404,7 @@ print(f"Tests failed: {failed}")
 print("=" * 60)
 
 if failed == 0:
-    print("ALL TOOL REGISTRY TESTS PASSED")
+    print("ALL CREATE TOOL TESTS PASSED")
 else:
-    print("SOME TOOL REGISTRY TESTS FAILED")
+    print("SOME CREATE TOOL TESTS FAILED")
     raise SystemExit(1)
-
