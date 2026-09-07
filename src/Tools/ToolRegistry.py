@@ -12,7 +12,7 @@ class ToolRegistry:
         self.tools_path = Path(__file__).parent / "builtin"
         self.logger = get_logger('[TOOLREGISTRY]')
         self.tools = {}
-    def _discoverTools(self):
+    def _discover_tools(self):
 
         discovered_tools = []
 
@@ -100,7 +100,7 @@ class ToolRegistry:
 
 
     def discover(self):
-        discovered_tools = self._discoverTools()
+        discovered_tools = self._discover_tools()
 
         for tool in discovered_tools:
             self.tools[tool.name] = tool
@@ -112,3 +112,8 @@ class ToolRegistry:
 
     def is_available(self,toolname:str):
         return toolname in self.tools
+    def get(self, toolname: str):
+        return self.tools.get(toolname)
+        
+    def get_definitions(self):
+        return [tool.get_definition() for tool in self.tools.values()]
