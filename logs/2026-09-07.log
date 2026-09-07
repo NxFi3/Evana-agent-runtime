@@ -1,0 +1,12 @@
+[16:32:47] [INFO] [[TOOLREGISTRY]] → Found tool package: readfile
+[16:32:47] [INFO] [[TOOLREGISTRY]] → Loaded module: <module 'src.Tools.builtin.readfile' from '/home/itsnxfi3/Desktop/Evana-agent-runtime/src/Tools/builtin/readfile/__init__.py'>
+[16:32:47] [INFO] [[TOOLREGISTRY]] → Exports: ['ReadFile']
+[16:32:47] [INFO] [[TOOLREGISTRY]] → Found Tool class: <class 'src.Tools.builtin.readfile.readfile.ReadFile'>
+[16:32:47] [INFO] [[TOOLREGISTRY]] → Instantiated: read_file
+[16:32:47] [INFO] [[TOOLREGISTRY]] → Discovered 1 tool(s)
+[16:42:44] [INFO] [[TOOLREGISTRY]] → Found tool package: readfile
+[16:42:44] [INFO] [[TOOLREGISTRY]] → Loaded module: <module 'src.Tools.builtin.readfile' from '/home/itsnxfi3/Desktop/Evana-agent-runtime/src/Tools/builtin/readfile/__init__.py'>
+[16:42:44] [INFO] [[TOOLREGISTRY]] → Exports: ['ReadFile']
+[16:42:44] [INFO] [[TOOLREGISTRY]] → Found Tool class: <class 'src.Tools.builtin.readfile.readfile.ReadFile'>
+[16:42:44] [INFO] [[TOOLREGISTRY]] → Instantiated: read_file
+[16:42:44] [INFO] [[TOOLREGISTRY]] → Discovered 1 tool(s)
