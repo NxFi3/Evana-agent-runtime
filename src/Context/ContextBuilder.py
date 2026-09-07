@@ -38,7 +38,7 @@ class ContextBuilder:
         
         self.context_window.set_trajectory(Trajectory)
         self.context_window.set_user(user_inputs)
-        self.context_window.set_tools(self._load_tool_instructions())
+        self.context_window.set_plans(self._load_tool_instructions())
         self.context_window.set_task(self._load_developer_instructions())
         return self.context_window.prompt()
 

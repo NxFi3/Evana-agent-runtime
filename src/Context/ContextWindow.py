@@ -3,7 +3,7 @@ class ContextWindow:
         self.system = "" # system Instruction
         self.task = "" # developer instructions
         self.trajectory = "" # current trajectory of the agent previous steps tools results agent responses..
-        self.tools = "" # tool use instructions  
+        self.plans = "" # plan instructions
         self.user = "" # user input
 
     def set_system(self, content: str):
@@ -14,28 +14,26 @@ class ContextWindow:
     def set_trajectory(self, content: str):
         self.trajectory = content
 
-    def set_tools(self, content: str):
-        self.tools = content
+    def set_plans(self, content: str):
+        self.plans = content
 
     def set_user(self, content: str):
         self.user = content
 
     def prompt(self) -> str:
-        return f"""
+     return f"""
 ## System
 {self.system}
-
-## Available Tools
-{self.tools}
 
 ## Developer Instructions
 {self.task}
 
-## User Input
-{self.user}
+## Plan
+{self.plans}
 
 ## Trajectory
 {self.trajectory}
 
-## Next Steps
+## User Input
+{self.user}
 """.strip()
