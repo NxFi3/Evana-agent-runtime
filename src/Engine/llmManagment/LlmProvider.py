@@ -21,5 +21,5 @@ class LlmProvider:
             return self.model.show_model_info()
         else:
             raise ValueError(f"Unsupported LLM provider: {self.provider_type}")
-    def generate(self,text: str,image: np.ndarray = None):
-        return self.model.generate(text, image)
+    def generate(self,text: str,tools:list = None,image: np.ndarray = None):
+        return self.model.chat(text,tools, image)
