@@ -3,22 +3,22 @@
 from typing import Dict, Any, List, Optional
 from src.Utils.logger import get_logger
 from src.Context.ContextBuilder import ContextBuilder
+from src.Context.ContextWindow import ContextWindow
 from src.Context.Compactor import Compactor
 from src.Context.TokenBudget import TokenBudget
+from src.Engine.llmManagment.LlmProvider import LlmProvider
 logger = get_logger("[CONTEXTMANAGER]")
 
 
 class ContextManager:
 
     def __init__(
-        self,
-        context_builder: ContextBuilder,
-        compactor: Compactor,
-        token_budget: TokenBudget) -> None:
-
-        self.context_builder = context_builder
-        self.compactor = compactor
-        self.token_budget = token_budget
+        self,config:Dict[str,Any],LlmProvider: LlmProvider) -> None:
+        self.config = config 
+        self.llm_provider = LlmProvider
+        self.context_builder = ContextBuilder(ContextWindow())
+        self.compactor = Compactor(self.llm_provider)
+        self.token_budget = TokenBudget(self.config,self.llm_provider)
 
         self.compacted_trajectory: Optional[str] = None
         self.compacted_until_step = 0
