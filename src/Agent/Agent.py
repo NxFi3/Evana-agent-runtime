@@ -28,14 +28,6 @@ class Agent:
     def _tool_definitions(self):
         self.tool_definitions = self.TlManager.get_tools()
 
-    def _next_event_step(self) -> int:
-
-        events = self.Memory.get_previous_events(1)
-
-        if not events:
-            return 1
-
-        return events[-1].step + 1
 
     def _create_event(
         self,
@@ -44,11 +36,12 @@ class Agent:
         source: str,
         metadata: dict[str, object] | None = None,
     ) -> MemoryEvent:
+        self.steps +=1 
         return MemoryEvent(
             event_type=event_type,
             content=content,
             source=source,
-            step=self._next_event_step(),
+            step=self.steps,
             metadata=metadata or {},
         )
 

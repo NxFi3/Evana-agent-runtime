@@ -33,8 +33,7 @@ class ContextBuilder:
             return ""
     def build_context(self,User_input:str='',STM_Result:List[MemoryEvent]=[]):
         Trajectory = "\n".join([f"Step {event.step}: {event.event_type} {event.content}" for event in STM_Result])
-        User_inputs = "\n".join([f"Step {event.step}: {event.content}" for event in STM_Result if event.event_type.lower() == 'user_input'])
-        user_inputs = f"{User_inputs}\n{User_input}"
+        user_inputs = f"{User_input}"
         
         self.context_window.set_trajectory(Trajectory)
         self.context_window.set_user(user_inputs)
