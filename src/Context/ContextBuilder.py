@@ -9,8 +9,8 @@ logger = get_logger('[CONTEXTBUILDER]')
 class ContextBuilder:
     def __init__(self, context_window: ContextWindow):
         self.context_window = context_window
-        self.DeveloperInstructions_path = '/agentInstructions/DeveloperInstructions.md'
-        self.Systemnstructions_path = '/agentInstructions/SystemInstructions.md'
+        self.DeveloperInstructions_path = 'agentInstructions/DeveloperInstructions.md'
+        self.Systemnstructions_path = 'agentInstructions/SystemInstructions.md'
     def _load_developer_instructions(self) -> str:
         try:
             with open(self.DeveloperInstructions_path, 'r') as file:
