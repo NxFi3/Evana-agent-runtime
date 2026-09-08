@@ -9,8 +9,8 @@ logger = get_logger('[CONTEXTBUILDER]')
 class ContextBuilder:
     def __init__(self, context_window: ContextWindow):
         self.context_window = context_window
-        self.DeveloperInstructions_path = '/instructions/DeveloperInstructions.md'
-        self.ToolInstructions_path = '/instructions/ToolInstructions.md'
+        self.DeveloperInstructions_path = '/agentInstructions/DeveloperInstructions.md'
+        self.Systemnstructions_path = '/agentInstructions/SystemInstructions.md'
     def _load_developer_instructions(self) -> str:
         try:
             with open(self.DeveloperInstructions_path, 'r') as file:
@@ -23,10 +23,10 @@ class ContextBuilder:
             return ""
     def _load_tool_instructions(self) -> str:
         try:
-            with open(self.ToolInstructions_path, 'r') as file:
+            with open(self.Systemnstructions_path, 'r') as file:
                 return file.read()
         except FileNotFoundError:
-            logger.warning(f"Tool instructions file not found at {self.ToolInstructions_path}.")
+            logger.warning(f"Tool instructions file not found at {self.Systemnstructions_path}.")
             return ""
         except Exception as e:
             logger.error(f"Error loading tool instructions: {e}")
@@ -37,7 +37,7 @@ class ContextBuilder:
         
         self.context_window.set_trajectory(Trajectory)
         self.context_window.set_user(user_inputs)
-        self.context_window.set_plans(self._load_tool_instructions())
+        self.context_window.set_system(self._load_tool_instructions())
         self.context_window.set_task(self._load_developer_instructions())
         return self.context_window.prompt()
 
