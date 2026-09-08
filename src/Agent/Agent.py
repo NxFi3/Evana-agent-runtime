@@ -1,4 +1,3 @@
-```python
 # src/Agent/Agent.py
 
 import numpy as np
