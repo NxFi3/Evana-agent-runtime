@@ -1,5 +1,9 @@
+import platform
+
+
 class ContextWindow:
     def __init__(self):
+        self.os_name = platform.system()
         self.system = "" # system Instruction
         self.task = "" # developer instructions
         self.trajectory = "" # current trajectory of the agent previous steps tools results agent responses..
@@ -23,6 +27,7 @@ class ContextWindow:
     def prompt(self) -> str:
      return f"""
 ## System
+OS: {self.os_name}
 {self.system}
 
 ## Developer Instructions
