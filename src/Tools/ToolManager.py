@@ -13,16 +13,23 @@ class ToolManager:
         self.dispatcher = ToolDispatcher()
         self.toolregistry = ToolRegistry()
 
-    def getTools(self):
+    def get_tools(self):
         self.toolregistry.discover()
         return self.toolregistry.get_definitions()
 
-    def execute(self, arguments: list[Any]):
+    def execute(self, tool_calls: list[Any]):
+        calls = []
         results = []
 
-        for argument in arguments:
+        for tool_call in tool_calls:
             try:
-                name, args = self.dispatcher.dispatch(argument)
+                name, args = self.dispatcher.dispatch(tool_call)
+                calls.append(
+                    {
+                        "name": name,
+                        "arguments": args
+                    }
+                )
 
                 tool = self.toolregistry.get(name)
 
@@ -35,11 +42,19 @@ class ToolManager:
                     )
                     continue
 
-                result = tool.execute(**args)
-                results.append(result)
+                results.append(tool.execute(**args))
 
             except Exception as e:
                 self.logger.error(f"Tool execution error: {e}")
-                results.append(ToolResult(success=False,content=f"Tool execution error: {e}"))
 
-        return results
+                results.append(
+                    ToolResult(
+                        success=False,
+                        content=f"Tool execution error: {e}"
+                    )
+                )
+
+        return {
+            "calls": calls,
+            "results": results
+        }
