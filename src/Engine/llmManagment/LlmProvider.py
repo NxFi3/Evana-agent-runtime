@@ -1,4 +1,6 @@
 #src/Engine/llmManagment/LlmProvider.py
+
+from typing import Any, Dict
 from src.Engine.llmManagment.ollama import OllamaProvider
 from src.Utils.logger import get_logger
 import numpy as np
@@ -21,5 +23,5 @@ class LlmProvider:
             return self.model.show_model_info()
         else:
             raise ValueError(f"Unsupported LLM provider: {self.provider_type}")
-    def generate(self,text: str,tools:list = None,image: np.ndarray = None):
+    def generate(self,text: list[Dict[str, Any]],tools:list = None,image: np.ndarray = None):
         return self.model.chat(text,tools, image)

@@ -2,6 +2,7 @@
 
 import ollama
 from src.Utils.logger import get_logger
+from typing import Any, Dict
 import numpy as np
 
 logger = get_logger("[Ollama]")
@@ -61,23 +62,21 @@ class OllamaProvider:
             logger.error(f"Error fetching model context length: {e}")
             return None
 
-    def chat(self, text: str, tools: list = None,image: np.ndarray = None):
-        message = {'role':'system','content':text}
+    def chat(self, text:list[Dict[str, Any]], tools: list = None,image: np.ndarray = None):
         if image is not None:
-            message['images'] = [image]
+            text[-1]['images'] = [image]
         try:
             logger.info("Generating chat response")
 
             chat_response = ollama.chat(
                 model=self.model_name,
-                messages=[message],
+                messages=text,
                 tools=tools,
                 options=self.options,
             )
 
             response = chat_response.model_dump()
 
-            # Make the output compatible with the old GenerateResponse shape.
             response["response"] = (
                 chat_response.message.content
                 if chat_response.message is not None
@@ -90,13 +89,11 @@ class OllamaProvider:
                 else None
             )
 
-            # GenerateResponse compatibility fields.
             response.setdefault("context", None)
             response.setdefault("image", None)
             response.setdefault("completed", None)
             response.setdefault("total", None)
 
-            # Keep the complete native Ollama ChatResponse.
             response["chat_response"] = chat_response
 
             return response
