@@ -1,0 +1,19 @@
+{
+  "llm": {
+    "provider": "ollama",
+    "provider_config": {
+      "model_name": "gemma4:e4b",
+      "llm-options": {}
+    }
+  },
+
+  "memory": {},
+
+  "context": {},
+
+  "retrieval": {},
+
+  "models": {},
+
+  "max_agent_iterations": 30
+}
