@@ -70,7 +70,7 @@ At a high level, Evana is organized around several cooperating layers:
                      ┌──────┴──────┐
                      │             │
                   Success       Recovery
-``` 
+```
 
 The Harness is the planned control plane connecting these components. It should orchestrate existing runtime components instead of duplicating them.
 
@@ -113,6 +113,7 @@ The following are architectural goals rather than completed functionality:
 - robust browser/computer-use integration
 - mature evaluation and benchmark infrastructure
 - parallel/subagent orchestration
+- dedicated memory-maintenance orchestration
 
 The README intentionally distinguishes the target architecture from what is already implemented.
 
@@ -265,12 +266,19 @@ Deduplication / relevance
     ▼
 Durable memory
     │
-    ▼
-Retrieval
-    │
-    ▼
-Context
+    ├───────────────┐
+    │               │
+    ▼               ▼
+Retrieval      Memory Maintenance
+    │               │
+    ▼               ├── duplicate detection
+Context             ├── merge / update
+                    ├── contradiction handling
+                    ├── stale / low-value cleanup
+                    └── index consistency
 ```
+
+The distinction between **write-time consolidation** and **post-storage maintenance** is intentional. Consolidation decides what a new runtime event deserves to become durable memory; maintenance periodically revisits memories that already exist.
 
 ## Memory Events
 
@@ -307,9 +315,53 @@ The system is intended to reduce:
 
 The memory architecture is still under active development.
 
+## Memory Maintenance
+
+Memory Maintenance is a **planned subsystem and is not implemented yet**.
+
+Its purpose is different from `MemoryConsolidator`. Consolidation operates when new events are converted into candidate durable memories. Maintenance operates on the existing durable-memory store and keeps it healthy over time.
+
+The intended responsibilities include:
+
+- detecting memories that are duplicates or near-duplicates
+- merging memories when multiple records represent the same underlying fact
+- detecting conflicting or contradictory memories
+- updating or superseding stale memories when newer information is available
+- identifying low-value, obsolete, or rarely useful memories
+- applying controlled decay/pruning policies where appropriate
+- maintaining consistency between durable-memory records and retrieval indexes
+- rebuilding or repairing retrieval indexes when required
+- producing auditable maintenance actions rather than silently changing memory
+
+A future maintenance cycle is expected to look approximately like:
+
+```text
+Durable Memory Store
+        │
+        ▼
+Candidate Selection
+        │
+        ▼
+Similarity / Metadata Analysis
+        │
+        ├──────────────┬───────────────┬───────────────┐
+        ▼              ▼               ▼               ▼
+     Duplicate     Conflict        Stale/Low       Healthy
+        │              │            Value             │
+        ▼              ▼               ▼              ▼
+      Merge       Resolve/Update     Prune          Keep
+        │              │               │              │
+        └──────────────┴───────────────┴──────────────┘
+                       │
+                       ▼
+                Index Consistency
+```
+
+This subsystem is deliberately described as a future architectural component rather than a completed feature. The current codebase already contains some of the lower-level primitives it will need, such as persistent memory metadata, item updates/deletion, embeddings, and FAISS index insertion/removal, but the maintenance policy and orchestration layer still need to be designed and implemented.
+
 ## Retrieval
 
-`Retrieval` provides access to relevant stored memories. The system includes embedding-based retrieval and reranking infrastructure, with metadata available for additional scoring.
+`Retrieval` provides access to relevant stored memories. The current system combines embedding-based retrieval with lexical FTS/BM25 retrieval, reciprocal-rank fusion, and reranking. FAISS is persisted separately from the SQLite memory store.
 
 Future retrieval work will focus on intent-aware retrieval and better handling of semantic/paraphrased queries rather than relying only on lexical matching.
 
@@ -538,6 +590,10 @@ Important metrics may include:
 - context-compaction quality
 - memory retrieval quality
 - memory write precision/recall
+- memory maintenance precision/recall
+- duplicate-memory rate
+- contradiction resolution rate
+- stale-memory/pruning accuracy
 - failure rate by category
 - successful completion after interruption/resume
 
@@ -634,6 +690,7 @@ The roadmap is intentionally incremental.
 - [ ] ablation studies
 - [ ] memory benchmarks
 - [ ] retrieval benchmarks
+- [ ] memory maintenance benchmarks
 - [ ] harness/recovery benchmarks
 - [ ] long-horizon task evaluation
 
@@ -645,40 +702,8 @@ The immediate priority is **not** to add every advanced agent feature.
 
 The current priority is to understand and implement the smallest correct Harness that can reliably control the existing Evana components.
 
-Before writing the Harness implementation, the runtime lifecycle should be specified precisely:
+For the memory subsystem, the current foundation is already in place: events can be accumulated, the consolidation path can create durable memories, persistent metadata is stored in SQLite, embeddings are persisted, and the retrieval index can be updated. The next architectural step is to make the memory lifecycle more complete by adding a dedicated maintenance layer over already-stored memories.
 
-```text
-User task
-   ↓
-Task state
-   ↓
-Context + memory
-   ↓
-Agent decision
-   ↓
-Action
-   ↓
-Tool execution
-   ↓
-Observation
-   ↓
-Verification
-   ↓
-Success / Recovery / Failure
-   ↓
-Updated state
-   ↓
-Next decision
-```
+Memory Maintenance will remain explicitly marked as planned until its policies, orchestration, safety checks, and tests are actually implemented.
 
-The implementation should then follow this contract rather than inventing abstractions prematurely.
-
----
-
-# Status
-
-**Evana Agent Runtime is an active research/engineering project.**
-
-The foundation for context, memory, tools, and local model execution exists, while the central Harness/control-plane architecture is the next major step toward a reliable long-running agent runtime.
-
-The project deliberately prioritizes correctness of the runtime lifecycle over adding a large number of features prematurely.
+The project should continue to evolve from real runtime failures and measurable behavior rather than from adding abstractions only because they sound useful.
