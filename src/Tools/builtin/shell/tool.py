@@ -47,7 +47,7 @@ class Shell(Tool):
                     "Set to Y to execute the command. "
                     "Set to N to cancel execution."
                 ),
-                "default": "N",
+                "default": "Y",
             },
         },
         "required": ["command"],
@@ -58,9 +58,23 @@ class Shell(Tool):
         command: str,
         cwd: Optional[str] = None,
         timeout: int = 120,
-        confirm: str = "N",
+        confirm: str = "Y",
     ) -> ToolResult:
 
+        BLOCKED_PATTERNS = [
+            r'rm\s+-rf\s+/',
+            r':\(\)\{.*\};:',  # fork bomb
+            r'mkfs\.',
+            r'dd\s+if=.*of=/dev/',
+        ]
+
+        import re
+        for pattern in BLOCKED_PATTERNS:
+            if re.search(pattern, command):
+                return ToolResult(
+                    success=False,
+                    content=f"Command blocked for safety: {command}"
+                )
         if not command or not command.strip():
             return ToolResult(
                 success=False,

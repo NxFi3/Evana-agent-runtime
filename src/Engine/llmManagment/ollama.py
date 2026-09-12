@@ -35,7 +35,6 @@ class OllamaProvider:
     def show_model_info(self):
         try:
             model_info = ollama.show(self.model_name)
-            logger.info(f"Model info: {model_info}")
             return model_info
 
         except Exception as e:

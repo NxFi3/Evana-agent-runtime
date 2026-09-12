@@ -2,7 +2,7 @@
   "llm": {
     "provider": "ollama",
     "provider_config": {
-      "model_name": "gemma4:e4b",
+      "model_name": "gpt-oss:20b",
       "llm-options": {}
     }
   },
@@ -15,5 +15,5 @@
 
   "models": {},
 
-  "max_agent_iterations": 30
+  "max_agent_iterations": 100
 }

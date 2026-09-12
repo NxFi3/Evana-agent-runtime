@@ -41,7 +41,7 @@ class ContextBuilder:
         if event_type == 'agent_action':
             return {"role": "assistant", "content": event.content}
         if event_type == 'tool_result':
-            message: Message = {"role": "tool", "content": event.content}
+            message: Message = {"role": "tool", "content": event.content,'metadata':event.metadata}
             tool_name = event.metadata.get("tool_name")
             if tool_name:
                 message["name"] = tool_name

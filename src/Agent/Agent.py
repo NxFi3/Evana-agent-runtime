@@ -51,11 +51,6 @@ class Agent:
         image: np.ndarray = None,
     ):
 
-        if not isinstance(user_input, MemoryEvent):
-            raise TypeError(
-                f"user_input must be MemoryEvent, got {type(user_input)}"
-            )
-
         if not self.Memory.step(user_input):
             self.logger.error("Failed to store user input in memory.")
             return ""
@@ -64,7 +59,7 @@ class Agent:
         context = self.CtxManager.build_agent_context(
             PreviousResponse={},
             User_input=user_input.content,
-            STM_Result=self.Memory.get_previous_events(10),
+            STM_Result=self.Memory.get_previous_events(100),
         )
 
 
