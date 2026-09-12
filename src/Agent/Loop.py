@@ -247,14 +247,10 @@ class Loop:
             self.state.iteration = iteration
             self.state.phase = "thinking"
 
-            self.logger.info(
-                f"Agent iteration {iteration}/{max_iterations}"
-            )
+            self.logger.info(f"Agent iteration {iteration}/{max_iterations}")
 
             results = self.llm.generate(context,self.tool_definitions,image)
-            if self._check_repeated_tool_calls(tool_calls):
-                self.logger.info(f"Raw tool calls: {tool_calls!r}"
-                                 )
+
             if not results:
 
                 self.logger.error("LLM returned an empty response.")
@@ -268,6 +264,8 @@ class Loop:
             message = results.get("message") or {}
 
             tool_calls = message.get("tool_calls") or []
+            if self._check_repeated_tool_calls(tool_calls):
+                self.logger.info(f"Raw tool calls: {tool_calls!r}")
             if response:
                 self.state.last_observation = response
                 self.memory.step(
