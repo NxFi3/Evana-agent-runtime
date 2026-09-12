@@ -1,39 +1,109 @@
 # Evana Agent Runtime
 
-Evana is a local, model-agnostic agent runtime for building long-running, tool-using AI agents that can work on real tasks rather than only producing text.
+> **The LLM makes decisions. The runtime makes those decisions reliable.**
 
-The project is being developed around a simple principle:
+Evana is an **open-source, local-first, model-agnostic runtime for building stateful, tool-using LLM agents**.
 
-> **The LLM makes decisions; the runtime makes those decisions reliable.**
+The goal is not to build another `LLM → tool → LLM` wrapper. Evana is being developed as a runtime layer for the difficult parts of real agent execution:
 
-Evana is not intended to be just a prompt wrapper or a basic `LLM → tool → LLM` loop. The runtime is being designed to manage context, memory, tool execution, environment state, verification, recovery, and eventually long-running/resumable tasks.
+- context management
+- memory
+- tool execution
+- execution state
+- environment interaction
+- verification
+- failure handling and recovery
+- long-running tasks
 
----
-
-## Project Goals
-
-Evana aims to provide the infrastructure required for an autonomous agent to:
-
-- understand a user task
-- reason about what should happen next
-- use tools safely
-- observe the result of its actions
-- distinguish execution success from actual task success
-- recover from failures instead of blindly repeating actions
-- maintain useful short-term and long-term memory
-- manage large context windows without losing important information
-- work across multiple steps and long-running sessions
-- preserve enough state to resume interrupted tasks
-- support different model providers without coupling the runtime to one model
-- eventually support coding, browser, computer-use, and other tool-driven agents through the same runtime
-
-The long-term target is a **general agent runtime / harness**, not a single-purpose coding assistant.
+🚧 **Evana is actively under development.** Some components are implemented, while the Agent Loop, memory lifecycle, evaluation, and future Harness are still evolving.
 
 ---
 
-## Core Architecture
+## Why Evana?
 
-At a high level, Evana is organized around several cooperating layers:
+A model can decide:
+
+```text
+"I should run the server."
+```
+
+A runtime has to deal with what happens next:
+
+```text
+Model decision
+      ↓
+Tool execution
+      ↓
+Observation
+      ↓
+Did it actually work?
+      ↓
+      ├── YES → continue
+      │
+      └── NO  → understand failure → recover → continue
+```
+
+The central idea is:
+
+> **An LLM response is not ground truth about the environment.**
+
+For example, `node server.js` exiting successfully does not necessarily mean that the application is actually working.
+
+Evana is being designed around the boundary between **model reasoning** and **reliable runtime execution**.
+
+---
+
+# Current Status
+
+### Implemented / active
+
+- structured LLM message handling
+- local Ollama provider
+- model context-length discovery
+- context-window management
+- token budgeting and safety margins
+- trajectory/event handling
+- context compaction
+- memory events and durable memory items
+- SQLite-backed memory infrastructure
+- embedding-based retrieval
+- lexical retrieval
+- reciprocal-rank fusion
+- reranking
+- memory consolidation foundation
+- tool registration and execution infrastructure
+- agent instructions
+- initial Agent execution loop
+- generated test project for end-to-end experiments
+
+### In active development
+
+- reliable Agent execution loop
+- stronger separation between reasoning and execution
+- structured execution state
+- context/memory coordination
+- memory lifecycle and maintenance
+- task-level verification
+- failure handling and recovery
+- evaluation and benchmarking
+
+### Planned
+
+- dedicated Runtime/Harness control plane
+- checkpoint/resume
+- process lifecycle management
+- browser/computer-use integration
+- parallel/subagent orchestration
+- mature task-level evaluation
+- long-running autonomous tasks
+
+The distinction between **implemented**, **in development**, and **planned** is intentional.
+
+---
+
+# Architecture
+
+The long-term architecture is centered around a runtime that coordinates the model with the environment.
 
 ```text
                          User Task
@@ -41,20 +111,20 @@ At a high level, Evana is organized around several cooperating layers:
                             ▼
                      ┌─────────────┐
                      │    Agent    │
-                     │  reasoning  │
+                     │  Reasoning  │
                      └──────┬──────┘
                             │
                             ▼
-                     ┌─────────────┐
-                     │   Harness   │
-                     │ / Runtime   │
-                     └──────┬──────┘
+                 ┌─────────────────────┐
+                 │    Runtime /        │
+                 │    Harness          │
+                 └──────────┬──────────┘
                             │
           ┌─────────────────┼─────────────────┐
           │                 │                 │
           ▼                 ▼                 ▼
       Context            Memory            Tools
-      Manager            System            System
+      System             System            System
           │                 │                 │
           │                 │                 ▼
           │                 │            Environment
@@ -69,57 +139,465 @@ At a high level, Evana is organized around several cooperating layers:
                             │
                      ┌──────┴──────┐
                      │             │
-                  Success       Recovery
+                  Success       Failure
+                                    │
+                                    ▼
+                                Recovery
 ```
 
-The Harness is the planned control plane connecting these components. It should orchestrate existing runtime components instead of duplicating them.
+The **Runtime/Harness** shown above is the long-term architectural direction. The current codebase is being built toward this separation incrementally.
 
 ---
 
-## Current State
+# Core Components
 
-Evana is actively under development. Some components are functional while others are scaffolding for the planned runtime.
+## Agent
 
-### Currently implemented / in active development
+The Agent is responsible for model-driven reasoning:
 
-- structured LLM messages
-- local Ollama provider
-- model context-length discovery
-- context window management
-- token budgeting and safety margins
-- trajectory construction from agent/tool events
-- context compaction
-- memory events and memory items
-- SQLite-backed memory infrastructure
-- memory retrieval
-- memory consolidation pipeline
-- embedding and reranking components
-- tool registry / dispatch / execution infrastructure
-- agent instructions
-- an initial agent execution loop
-- a real generated test project used to evaluate agent behavior
+```text
+Task
+ ↓
+Context + Memory + Tool information
+ ↓
+LLM
+ ↓
+Next action
+```
 
-### Not yet complete
-
-The following are architectural goals rather than completed functionality:
-
-- a dedicated Harness/control-plane implementation
-- explicit execution-state management
-- robust process lifecycle management
-- first-class observation/state representation
-- reliable task-level verification
-- policy-driven recovery
-- checkpoint/resume for long-running tasks
-- robust browser/computer-use integration
-- mature evaluation and benchmark infrastructure
-- parallel/subagent orchestration
-- dedicated memory-maintenance orchestration
-
-The README intentionally distinguishes the target architecture from what is already implemented.
+The current Agent implementation is evolving, with the immediate focus on making the execution loop reliable and keeping responsibilities separated between model and runtime.
 
 ---
 
-## Repository Structure
+# Context System
+
+The Context subsystem controls what information is presented to the model at each step.
+
+### ContextWindow
+
+Represents structured model context containing information such as:
+
+- system instructions
+- task/developer instructions
+- plans
+- user input
+- trajectory messages
+- tool interactions
+
+Evana uses structured messages rather than flattening the entire interaction into one prompt.
+
+### ContextBuilder
+
+Converts runtime events and relevant information into model-facing messages.
+
+| Runtime event | Model representation |
+|---|---|
+| `user_input` | `user` |
+| `agent_action` | `assistant` |
+| `tool_call` | tool-call message |
+| `tool_result` | `tool` |
+
+### ContextManager
+
+Coordinates context construction, trajectory management, token limits, and compaction.
+
+### TokenBudget
+
+Tracks available context capacity and keeps a safety margin so the runtime does not intentionally consume the entire model context window.
+
+### Compaction
+
+When a trajectory becomes too large, Evana can compact older information instead of allowing context overflow.
+
+Future work will make compaction increasingly state-aware so important facts, unfinished work, tool state, and recovery information survive context transitions.
+
+---
+
+# Memory System
+
+Memory is one of the major architectural areas of Evana. The goal is **not** to permanently store every conversation event.
+
+Evana separates runtime events from durable memories:
+
+```text
+Runtime Events
+      │
+      ▼
+Memory Decision
+      │
+      ▼
+Candidate Memory
+      │
+      ▼
+Durable Memory
+      │
+      ├───────────────┐
+      │               │
+      ▼               ▼
+ Retrieval       Maintenance
+      │               │
+      ▼               ▼
+   Context       Memory Store
+```
+
+## Memory Events
+
+`MemoryEvent` represents raw runtime events such as user input, agent actions, tool calls, and tool results.
+
+## Memory Items
+
+`MemoryItem` represents durable information worth retaining.
+
+```text
+Event ≠ Memory
+
+Event:
+"The user asked to use PostgreSQL."
+
+Memory:
+"The project uses PostgreSQL."
+```
+
+## Memory Consolidation
+
+`MemoryConsolidator` decides whether information from runtime events should become durable memory.
+
+The current design uses an LLM-based decision stage with structured output followed by runtime-side parsing and memory handling.
+
+The intended purpose is to reduce:
+
+- irrelevant events
+- transient noise
+- duplicate memories
+- unnecessary database growth
+- low-value information
+
+The memory pipeline is still under active development.
+
+## Memory Maintenance
+
+Memory Maintenance is **planned and is not yet implemented as a complete subsystem**.
+
+It is intentionally different from consolidation:
+
+```text
+Consolidation
+New events → candidate durable memories
+
+Maintenance
+Existing memories → analyze → merge/update/prune/keep
+```
+
+The planned maintenance layer may eventually handle:
+
+- duplicate detection
+- merging
+- contradiction detection
+- stale-memory handling
+- superseding old information
+- low-value memory pruning
+- retrieval-index consistency
+- auditable memory changes
+
+This is future work, not a completed feature.
+
+---
+
+# Retrieval
+
+Evana's retrieval layer combines multiple signals rather than relying on a single search mechanism.
+
+```text
+Query
+ │
+ ├── Semantic Retrieval
+ │
+ └── Lexical Retrieval
+          │
+          ▼
+      Rank Fusion
+          │
+          ▼
+       Reranking
+          │
+          ▼
+   Relevant Memories
+```
+
+The current implementation uses embedding-based retrieval together with lexical retrieval, rank fusion, and reranking.
+
+Future work includes better handling of semantic/paraphrased queries and intent-aware retrieval.
+
+---
+
+# Tool System
+
+Evana contains a tool execution layer responsible for:
+
+- tool registration
+- tool discovery
+- dispatch
+- execution
+- standardized results
+
+The architectural boundary is:
+
+```text
+Agent / Runtime
+      │
+      ▼
+Tool Manager
+      │
+      ▼
+Concrete Tool
+      │
+      ▼
+Environment
+```
+
+The long-term runtime should decide **when and under what policy** a tool should execute. The tool layer should remain responsible for **how the tool is invoked**.
+
+---
+
+# Agent Execution
+
+The current development focus is the Agent execution loop.
+
+The intended interaction is:
+
+```text
+Task
+ ↓
+Build Context
+ ↓
+LLM Decision
+ ↓
+Tool / Action
+ ↓
+Observe Result
+ ↓
+Update State
+ ↓
+Build Next Context
+ ↓
+LLM Decision
+ ↓
+...
+```
+
+The goal is to avoid treating the LLM as the entire runtime. The runtime should be able to track what actually happened independently from what the model claimed happened.
+
+---
+
+# Runtime / Harness
+
+The **Harness** is the next major architectural layer and is currently a planned direction rather than a finished subsystem.
+
+It should not become another LLM wrapper, tool manager, prompt layer, or copy of the Agent loop. Its purpose is reliable execution control around existing runtime components.
+
+The intended lifecycle is:
+
+```text
+PLAN
+  ↓
+ACT
+  ↓
+OBSERVE
+  ↓
+VERIFY
+  ↓
+ ┌─────────────┐
+ │             │
+SUCCESS      FAILURE
+ │             │
+ ▼             ▼
+DONE         RECOVER
+               │
+               ▼
+              ACT
+```
+
+Potential responsibilities include:
+
+- execution state
+- action lifecycle
+- environment observations
+- tool execution policy
+- process lifecycle
+- task verification
+- failure classification
+- recovery policies
+- checkpoints
+- resume/restart
+- security and permissions
+- logging and telemetry
+- context/memory coordination
+
+The exact implementation is intentionally not frozen yet.
+
+---
+
+# Long-Running Tasks
+
+A major long-term goal is supporting tasks that cannot reliably be completed inside one context window or one execution burst.
+
+```text
+Task
+ │
+ ├── Context Window 1
+ │       └── progress + artifacts + state
+ │
+ ├── Checkpoint
+ │
+ ├── Context Window 2
+ │       └── resume from structured state
+ │
+ ├── Checkpoint
+ │
+ └── ...
+```
+
+The runtime eventually needs to preserve structured state such as:
+
+- task objective
+- completed work
+- unfinished work
+- relevant memories
+- environment state
+- artifacts
+- tool/process state
+- failures and recovery attempts
+- verification status
+
+This is a planned capability.
+
+---
+
+# Coding Agent Direction
+
+Software engineering is one of the primary target workloads for Evana.
+
+A future coding agent should be able to:
+
+1. inspect a repository
+2. understand the task
+3. plan changes
+4. edit files
+5. execute commands
+6. observe results
+7. run tests
+8. diagnose failures
+9. modify the implementation
+10. verify the result
+11. stop only when the task is actually complete
+
+The repository contains a generated `test_project/` used for practical end-to-end experiments.
+
+The goal is not simply:
+
+> Can the LLM generate code?
+
+The more important question is:
+
+> **Can the runtime keep the agent on track when the environment pushes back?**
+
+---
+
+# Computer-Use Direction
+
+Evana is intended to remain general enough to support browser and computer-use agents in the future.
+
+A future computer-use backend could expose operations such as:
+
+```text
+observe
+click
+type
+keypress
+scroll
+drag
+```
+
+The runtime should still own the higher-level lifecycle:
+
+```text
+Observe
+   ↓
+Choose Action
+   ↓
+Execute
+   ↓
+Observe Again
+   ↓
+Verify
+   ↓
+Recover if Necessary
+```
+
+This is future work.
+
+---
+
+# Security
+
+Agent autonomy introduces security boundaries around operations such as:
+
+- filesystem modification
+- shell execution
+- network access
+- process creation
+- external services
+- computer interaction
+
+Evana treats these as **runtime concerns**, rather than assuming the model will always make safe decisions.
+
+The long-term design is expected to include explicit permissions, execution policies, auditable actions, controlled tool access, and runtime-level safety boundaries.
+
+---
+
+# Evaluation
+
+Evana is intended to be evaluated at the **task level**, rather than only by inspecting individual LLM responses.
+
+Potential metrics include:
+
+### Agent execution
+
+- task success rate
+- recovery success rate
+- verification accuracy
+- unnecessary action rate
+- tool-call efficiency
+- latency
+- token consumption
+
+### Context
+
+- compaction quality
+- important-state retention
+- context efficiency
+
+### Memory
+
+- retrieval quality
+- memory write precision/recall
+- duplicate-memory rate
+- contradiction handling
+- stale-memory handling
+- maintenance accuracy
+
+### Reliability
+
+- failure rate by category
+- successful recovery after failure
+- successful completion after interruption
+- checkpoint/resume success rate
+
+Formal benchmark infrastructure is still under development.
+
+---
+
+# Repository Structure
 
 ```text
 Evana-agent-runtime/
@@ -162,548 +640,168 @@ Evana-agent-runtime/
 │   └── ...
 │
 ├── test_project/
-│   └── Generated project used for end-to-end agent/runtime testing
+│   └── Generated project for end-to-end testing
 │
 └── README.md
 ```
-
-The repository also contains generated Python cache files in the current development history; these are ignored by `.gitignore` going forward.
-
----
-
-# Agent Runtime
-
-The Agent is responsible for deciding what should happen next based on the task, available context, memory, observations, and tool results.
-
-The current implementation is intentionally simple and is being evolved toward a clearer separation between:
-
-```text
-Agent reasoning
-      │
-      ▼
-Runtime / Harness
-      │
-      ▼
-Tool execution
-      │
-      ▼
-Observation + verification
-      │
-      ▼
-Agent reasoning
-```
-
-This separation is important because an LLM response such as `server started` is not itself proof that the user's task succeeded.
-
----
-
-# Context System
-
-The Context subsystem manages what information is presented to the model at each step.
-
-## ContextWindow
-
-`ContextWindow` represents the structured model context and currently supports:
-
-- system instructions
-- task/developer instructions
-- plans
-- trajectory messages
-- user input
-- structured message roles
-
-The runtime now passes structured messages to the LLM provider instead of flattening the entire interaction into one text prompt.
-
-## ContextBuilder
-
-`ContextBuilder` converts runtime information and memory events into model-facing messages.
-
-Events are mapped approximately as follows:
-
-| Runtime event | Model message |
-|---|---|
-| `user_input` | `user` |
-| `agent_action` | `assistant` |
-| `tool_call` | `assistant` / tool-call message |
-| `tool_result` | `tool` |
-
-This provides a foundation for proper tool-call trajectories and future provider-specific message handling.
-
-## ContextManager
-
-`ContextManager` coordinates context construction, trajectory handling, and compaction when the context budget becomes constrained.
-
-## TokenBudget
-
-`TokenBudget` tracks model token usage and available capacity using provider/runtime token accounting. A safety margin is used so the runtime does not intentionally consume the entire context window.
-
-## Compaction
-
-When the trajectory becomes too large, the runtime can compact older information rather than allowing context overflow.
-
-Future work will make compaction more state-aware so that critical facts, unfinished work, tool state, and recovery information survive context transitions.
-
----
-
-# Memory System
-
-Memory is one of Evana's major subsystems. The goal is not simply to store conversation text, but to manage information across the agent's lifecycle.
-
-The intended lifecycle is roughly:
-
-```text
-Raw events
-    │
-    ▼
-Memory decision
-    │
-    ▼
-Candidate memory
-    │
-    ▼
-Deduplication / relevance
-    │
-    ▼
-Durable memory
-    │
-    ├───────────────┐
-    │               │
-    ▼               ▼
-Retrieval      Memory Maintenance
-    │               │
-    ▼               ├── duplicate detection
-Context             ├── merge / update
-                    ├── contradiction handling
-                    ├── stale / low-value cleanup
-                    └── index consistency
-```
-
-The distinction between **write-time consolidation** and **post-storage maintenance** is intentional. Consolidation decides what a new runtime event deserves to become durable memory; maintenance periodically revisits memories that already exist.
-
-## Memory Events
-
-`MemoryEvent` represents runtime events such as user input, agent actions, tool calls, and tool results.
-
-Events are the raw history from which useful durable memories can be derived.
-
-## Memory Items
-
-`MemoryItem` represents durable memory rather than an individual runtime event.
-
-The distinction is important:
-
-```text
-Event ≠ Memory
-
-Event:   "The user asked to use PostgreSQL."
-Memory:  "The project uses PostgreSQL."
-```
-
-## Memory Consolidation
-
-`MemoryConsolidator` is responsible for deciding which information from runtime events deserves to become durable memory.
-
-The current design uses an LLM-based decision stage with structured output, followed by runtime parsing and memory handling.
-
-The system is intended to reduce:
-
-- duplicate memories
-- irrelevant events
-- transient noise
-- unnecessary database growth
-- contradictory or low-value information
-
-The memory architecture is still under active development.
-
-## Memory Maintenance
-
-Memory Maintenance is a **planned subsystem and is not implemented yet**.
-
-Its purpose is different from `MemoryConsolidator`. Consolidation operates when new events are converted into candidate durable memories. Maintenance operates on the existing durable-memory store and keeps it healthy over time.
-
-The intended responsibilities include:
-
-- detecting memories that are duplicates or near-duplicates
-- merging memories when multiple records represent the same underlying fact
-- detecting conflicting or contradictory memories
-- updating or superseding stale memories when newer information is available
-- identifying low-value, obsolete, or rarely useful memories
-- applying controlled decay/pruning policies where appropriate
-- maintaining consistency between durable-memory records and retrieval indexes
-- rebuilding or repairing retrieval indexes when required
-- producing auditable maintenance actions rather than silently changing memory
-
-A future maintenance cycle is expected to look approximately like:
-
-```text
-Durable Memory Store
-        │
-        ▼
-Candidate Selection
-        │
-        ▼
-Similarity / Metadata Analysis
-        │
-        ├──────────────┬───────────────┬───────────────┐
-        ▼              ▼               ▼               ▼
-     Duplicate     Conflict        Stale/Low       Healthy
-        │              │            Value             │
-        ▼              ▼               ▼              ▼
-      Merge       Resolve/Update     Prune          Keep
-        │              │               │              │
-        └──────────────┴───────────────┴──────────────┘
-                       │
-                       ▼
-                Index Consistency
-```
-
-This subsystem is deliberately described as a future architectural component rather than a completed feature. The current codebase already contains some of the lower-level primitives it will need, such as persistent memory metadata, item updates/deletion, embeddings, and FAISS index insertion/removal, but the maintenance policy and orchestration layer still need to be designed and implemented.
-
-## Retrieval
-
-`Retrieval` provides access to relevant stored memories. The current system combines embedding-based retrieval with lexical FTS/BM25 retrieval, reciprocal-rank fusion, and reranking. FAISS is persisted separately from the SQLite memory store.
-
-Future retrieval work will focus on intent-aware retrieval and better handling of semantic/paraphrased queries rather than relying only on lexical matching.
-
----
-
-# Tool System
-
-Evana already contains a tool execution layer. The Harness should build on it rather than replace it.
-
-The existing responsibilities include concepts such as:
-
-- tool registration
-- tool discovery
-- tool dispatch
-- tool execution
-- standardized tool results
-
-The important architectural boundary is:
-
-```text
-Harness
-   │
-   ▼
-Tool Manager / Dispatcher / Registry
-   │
-   ▼
-Concrete Tool
-```
-
-The Harness should decide **when and under what policy** a tool is executed. The tool layer should remain responsible for **how that tool is invoked**.
-
----
-
-# The Harness
-
-The Harness is the next major architectural layer of Evana.
-
-It should not be another LLM wrapper, another tool manager, or another agent loop. Its purpose is to provide reliable execution control around the model and existing runtime components.
-
-The intended lifecycle is:
-
-```text
-PLAN
-  ↓
-ACT
-  ↓
-OBSERVE
-  ↓
-VERIFY
-  ↓
-   ├── SUCCESS → DONE
-   │
-   └── FAILURE → RECOVER → ACT
-```
-
-The exact implementation is intentionally not frozen yet. The design will be based on the actual failure modes observed in end-to-end tasks.
-
-### Responsibilities being considered
-
-- execution state
-- action lifecycle
-- environment observations
-- tool execution policy
-- process lifecycle
-- task-level verification
-- failure classification
-- recovery policy
-- checkpoints
-- resume/restart
-- security and permissions
-- logging and telemetry
-- context/memory coordination
-
-A key distinction is:
-
-```text
-Execution success
-    ≠
-Task success
-```
-
-For example:
-
-```text
-"node server.js" returned successfully
-```
-
-does not necessarily mean:
-
-```text
-The website is working correctly.
-```
-
-The Harness should eventually make that distinction explicit.
-
----
-
-# Long-Running Tasks
-
-A major goal of Evana is to support tasks that cannot reliably be completed in one model context or one execution burst.
-
-A future long-running task may look like:
-
-```text
-Task
- │
- ├── Context window 1
- │     └── progress + artifacts + state
- │
- ├── Checkpoint
- │
- ├── Context window 2
- │     └── resume from structured state
- │
- ├── Checkpoint
- │
- └── ...
-```
-
-This requires more than conversation history. The runtime must preserve structured state such as:
-
-- task objective
-- completed work
-- unfinished work
-- current environment state
-- important files/artifacts
-- tool/process state
-- relevant memories
-- failures and recovery attempts
-- verification status
-
-This is a planned direction, not yet a completed subsystem.
-
----
-
-# Coding Agent Direction
-
-One of the primary target workloads for Evana is software engineering.
-
-A coding agent should be able to:
-
-1. inspect an existing repository
-2. understand the task
-3. plan changes
-4. edit files
-5. run commands
-6. observe outputs
-7. run tests/builds
-8. diagnose failures
-9. modify the implementation
-10. re-run verification
-11. stop when the task is actually complete
-
-The generated `test_project/` is used as a practical end-to-end test case for this direction.
-
-The point of this project is not merely to see whether an LLM can write code. It is to evaluate whether the **runtime can keep the agent on track when the environment pushes back**.
-
----
-
-# Computer Use Direction
-
-Evana is intended to remain general enough to support computer-use agents in the future.
-
-A computer-use backend could expose capabilities such as:
-
-```text
-observe screen
-click
-click target
-type
-keypress
-scroll
-drag
-```
-
-However, the Harness should remain responsible for the higher-level control loop:
-
-```text
-Observe
-  ↓
-Choose action
-  ↓
-Execute
-  ↓
-Observe again
-  ↓
-Verify expected state
-  ↓
-Recover if necessary
-```
-
-This allows coding tools, browser tools, and computer-use tools to share the same runtime concepts without forcing every tool to implement its own agent loop.
-
----
-
-# Security
-
-Agent autonomy creates security boundaries around actions such as:
-
-- filesystem modification
-- shell execution
-- network access
-- process creation
-- external services
-- computer interaction
-
-Evana therefore treats security as a runtime concern rather than something that should be delegated entirely to the model.
-
-The final design is expected to support explicit policies, permissions, and auditable execution decisions.
-
----
-
-# Evaluation Philosophy
-
-Evana should eventually be evaluated at the **task level**, not only by asking whether individual LLM responses look good.
-
-Important metrics may include:
-
-- task success rate
-- recovery success rate
-- verification accuracy
-- tool-call efficiency
-- unnecessary action rate
-- latency
-- token consumption
-- context-compaction quality
-- memory retrieval quality
-- memory write precision/recall
-- memory maintenance precision/recall
-- duplicate-memory rate
-- contradiction resolution rate
-- stale-memory/pruning accuracy
-- failure rate by category
-- successful completion after interruption/resume
-
-The generated test project is an early practical evaluation environment. More formal benchmark infrastructure will be added later.
 
 ---
 
 # Design Principles
 
-## 1. Model decisions are not ground truth
+### 1. Model decisions are not ground truth
 
 The runtime should verify important claims against the environment.
 
-## 2. Do not duplicate existing responsibilities
+### 2. Memory is not history
 
-The Harness should orchestrate existing components such as the tool system, context system, and memory system rather than rebuilding them.
+Not every event deserves to become durable memory.
 
-## 3. Prefer explicit state over hidden assumptions
+### 3. Context is a resource
 
-The runtime should know what phase it is in and what it believes the current environment state to be.
+The runtime should manage, prioritize, and compact context instead of endlessly appending history.
 
-## 4. Recover deliberately
+### 4. Separate responsibilities
 
-A failure should be classified and handled according to a recovery policy instead of triggering unlimited blind retries.
+The Agent reasons.
 
-## 5. Context is a resource
+The runtime coordinates.
 
-History should be managed, compressed, and prioritized rather than appended forever.
+The tool system executes.
 
-## 6. Memory is not history
+The environment produces observations.
 
-Durable memory should contain information worth retaining, not every event that happened.
+The verification layer determines whether the desired state was actually reached.
 
-## 7. Build from real failures
+### 5. Recover deliberately
 
-Architecture decisions should be validated against actual end-to-end agent failures instead of being added only because they sound useful.
+Failures should be classified and handled rather than triggering unlimited blind retries.
 
-## 8. Keep the runtime model-agnostic
+### 6. Prefer explicit state
 
-The runtime should not depend on the reasoning style of a single model. Local Ollama models are the current development environment, but the architecture should remain provider-independent.
+Important execution state should be represented explicitly rather than hidden inside prompts.
 
----
+### 7. Build from real failures
 
-# Development Roadmap
+Architecture should be driven by failures observed during actual end-to-end tasks.
 
-The roadmap is intentionally incremental.
+### 8. Stay model-agnostic
 
-### Phase 1 — Foundation
-
-- [x] structured context messages
-- [x] context window
-- [x] token budgeting
-- [x] context compaction foundation
-- [x] memory event/item abstractions
-- [x] memory storage foundation
-- [x] memory retrieval foundation
-- [x] memory consolidation foundation
-- [x] tool execution infrastructure
-- [x] local LLM provider
-
-### Phase 2 — Reliable Runtime / Harness
-
-- [ ] define runtime state model
-- [ ] define action/observation contracts
-- [ ] separate execution success from task success
-- [ ] define task completion criteria
-- [ ] implement controlled execution lifecycle
-- [ ] process lifecycle management
-- [ ] failure classification
-- [ ] recovery policies
-- [ ] checkpoint/resume foundation
-
-### Phase 3 — Strong Agent Execution
-
-- [ ] improve planning/execution separation
-- [ ] verification loops
-- [ ] structured task state
-- [ ] better context-state integration
-- [ ] robust interruption handling
-- [ ] observability and telemetry
-
-### Phase 4 — Advanced Agents
-
-- [ ] browser interaction
-- [ ] computer-use backend
-- [ ] subagents
-- [ ] parallel execution
-- [ ] isolated task/worktree execution
-- [ ] advanced long-running task orchestration
-
-### Phase 5 — Research & Evaluation
-
-- [ ] reproducible benchmark suite
-- [ ] ablation studies
-- [ ] memory benchmarks
-- [ ] retrieval benchmarks
-- [ ] memory maintenance benchmarks
-- [ ] harness/recovery benchmarks
-- [ ] long-horizon task evaluation
+Ollama is the current local development environment, but the runtime should not be coupled to a single model or provider.
 
 ---
 
-# Current Development Focus
+# Roadmap
 
-The immediate priority is **not** to add every advanced agent feature.
+## Phase 1 — Foundation
 
-The current priority is to understand and implement the smallest correct Harness that can reliably control the existing Evana components.
+- [x] Structured context messages
+- [x] Context window management
+- [x] Token budgeting
+- [x] Context compaction foundation
+- [x] Memory event/item abstractions
+- [x] Memory storage foundation
+- [x] Retrieval foundation
+- [x] Memory consolidation foundation
+- [x] Tool execution infrastructure
+- [x] Local LLM provider
 
-For the memory subsystem, the current foundation is already in place: events can be accumulated, the consolidation path can create durable memories, persistent metadata is stored in SQLite, embeddings are persisted, and the retrieval index can be updated. The next architectural step is to make the memory lifecycle more complete by adding a dedicated maintenance layer over already-stored memories.
+## Phase 2 — Reliable Agent Execution
 
-Memory Maintenance will remain explicitly marked as planned until its policies, orchestration, safety checks, and tests are actually implemented.
+- [ ] Improve Agent execution loop
+- [ ] Define structured runtime state
+- [ ] Define action/observation contracts
+- [ ] Separate execution success from task success
+- [ ] Define task completion criteria
+- [ ] Improve failure handling
+- [ ] Controlled recovery
 
-The project should continue to evolve from real runtime failures and measurable behavior rather than from adding abstractions only because they sound useful.
+## Phase 3 — Runtime / Harness
+
+- [ ] Harness/control-plane foundation
+- [ ] Process lifecycle management
+- [ ] Task-level verification
+- [ ] Failure classification
+- [ ] Recovery policies
+- [ ] Checkpoint/resume
+- [ ] Runtime observability
+
+## Phase 4 — Memory
+
+- [ ] Complete memory lifecycle
+- [ ] Improve semantic retrieval
+- [ ] Intent-aware retrieval
+- [ ] Memory maintenance
+- [ ] Duplicate/merge handling
+- [ ] Contradiction handling
+- [ ] Stale-memory handling
+- [ ] Retrieval-index maintenance
+
+## Phase 5 — Advanced Agents
+
+- [ ] Coding-agent evaluation
+- [ ] Browser tools
+- [ ] Computer-use integration
+- [ ] Long-running tasks
+- [ ] Parallel/subagent execution
+- [ ] Formal benchmarks
+
+---
+
+# Development Philosophy
+
+Evana is intentionally being built incrementally.
+
+Instead of implementing every proposed subsystem immediately, the architecture is being tested against actual agent behavior.
+
+```text
+Build
+ ↓
+Run real task
+ ↓
+Observe failure
+ ↓
+Identify missing runtime capability
+ ↓
+Design solution
+ ↓
+Implement
+ ↓
+Evaluate
+ ↓
+Repeat
+```
+
+The goal is to avoid building a large collection of abstractions that sound useful but are not validated by real agent workloads.
+
+---
+
+# Contributing
+
+Evana is currently an active development project.
+
+Feedback is especially valuable around:
+
+- agent execution architecture
+- memory design
+- retrieval
+- context management
+- tool/runtime boundaries
+- task verification
+- failure recovery
+- evaluation methodology
+
+If you find an architectural issue, unexpected behavior, or a better approach, opening an issue or discussion is welcome.
+
+---
+
+# Project Status
+
+**Status:** 🚧 Active Development
+
+Evana is not presented as a finished autonomous-agent framework.
+
+The current goal is to build and validate a reliable foundation for stateful, tool-using agents, one subsystem at a time.
+
+> **The objective is not to make the LLM look autonomous.**  
+> **The objective is to build a runtime that can make autonomous behavior reliable.**
