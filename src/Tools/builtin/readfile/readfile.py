@@ -5,8 +5,14 @@ from src.Tools.ToolResult import ToolResult
 class ReadFile(Tool):
     name = 'Read'
     description = (
-    "Read a file or list the contents of a directory. "
-    "For files, optional line ranges can be specified.")
+    "Read a file or list a directory.\n"
+    "IMPORTANT:\n"
+    "- If file_path points to a FILE, you may use start_line/end_line "
+    "to read a specific line range.\n"
+    "- If file_path points to a DIRECTORY, do NOT provide start_line "
+    "or end_line. The tool will return the directory contents.\n"
+    "- To inspect a directory, provide only file_path."
+)
     parameters = {'type':'object',
                   'properties':{
                       'file_path':{

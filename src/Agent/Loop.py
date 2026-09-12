@@ -251,43 +251,25 @@ class Loop:
                 f"Agent iteration {iteration}/{max_iterations}"
             )
 
-            results = self.llm.generate(
-                context,
-                self.tool_definitions,
-                image,
-            )
-
+            results = self.llm.generate(context,self.tool_definitions,image)
+            if self._check_repeated_tool_calls(tool_calls):
+                self.logger.info(f"Raw tool calls: {tool_calls!r}"
+                                 )
             if not results:
 
-                self.logger.error(
-                    "LLM returned an empty response."
-                )
+                self.logger.error("LLM returned an empty response.")
 
-                self._record_failure(
-                    reason="LLM returned an empty response.",
-                    iteration=iteration,
-                )
-
+                self._record_failure(reason="LLM returned an empty response.",iteration=iteration,)
                 self.state.phase = "failed"
                 self.state.completion = False
-
                 return response
-            response = results.get(
-                "response",
-                "",
-            )
+            response = results.get("response","")
 
-            message = results.get(
-                "message"
-            ) or {}
+            message = results.get("message") or {}
 
-            tool_calls = message.get(
-                "tool_calls"
-            ) or []
+            tool_calls = message.get("tool_calls") or []
             if response:
-
                 self.state.last_observation = response
-
                 self.memory.step(
                     self._create_event(
                         event_type="agent_action",
@@ -306,53 +288,23 @@ class Loop:
                 self.state.completion = True
                 self.state.progress = 1.0
 
-                self.logger.info(
-                    f"Agent completed at iteration {iteration}"
-                )
-
+                self.logger.info(f"Agent completed at iteration {iteration}")
                 return response
-
-            if self._check_repeated_tool_calls(
-                tool_calls
-            ):
-
+            if self._check_repeated_tool_calls(tool_calls):
                 self.state.phase = "failed"
                 self.state.completion = False
 
-                self.logger.warning(
-                    "Agent stopped because of repeated tool calls."
-                )
-
+                self.logger.warning("Agent stopped because of repeated tool calls.")
                 return response
             for call in tool_calls:
-
-                signature = self._tool_signature(
-                    call
-                )
-
-                self.state.history[
-                    "tool_calls"
-                ].append(signature)
+                signature = self._tool_signature(call)
+                self.state.history["tool_calls"].append(signature)
             self.state.phase = "executing"
-
-            execution = self._execute_tools(
-                tool_calls
-            )
-            results_list = execution.get(
-                "results",
-                [],
-            )
-
+            execution = self._execute_tools(tool_calls)
+            results_list = execution.get("results",[],)
             failed_tools = []
-
             for tool_result in results_list:
-
-                success = getattr(
-                    tool_result,
-                    "success",
-                    True,
-                )
-
+                success = getattr(tool_result,"success",True,)
                 if not success:
                     failed_tools.append(
                         getattr(
@@ -389,9 +341,7 @@ class Loop:
             reason=(
                 f"Maximum agent iterations reached: "
                 f"{max_iterations}"
-            ),
-            iteration=max_iterations,
-        )
+            ),iteration=max_iterations)
 
         self.state.phase = "failed"
         self.state.completion = False
