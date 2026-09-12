@@ -7,9 +7,9 @@ app.secret_key = 'super-secret-key-123456'
 # Load local product images if available
 import os
 
-# Helper to map product id to local image filename
+# Helper to map product name (lowercase) to local image filename
 image_dir = os.path.join(os.path.dirname(__file__), 'product_images')
-image_files = {os.path.splitext(f)[0]: f for f in os.listdir(image_dir) if os.path.isfile(os.path.join(image_dir, f))}
+image_files = {os.path.splitext(f)[0].lower(): f for f in os.listdir(image_dir) if os.path.isfile(os.path.join(image_dir, f))}
 
 # Sample product data
 products = [
@@ -18,36 +18,36 @@ products = [
         'name': 'Smartphone X',
         'category': 'Phones',
         'price': 699,
-        'image': image_files.get('1', 'https://images.unsplash.com/photo-1580281653784-6c7b3c6b7f5d?auto=format&fit=crop&w=400&q=80')
+        'image': image_files.get('smartphone x', 'https://images.unsplash.com/photo-1580281653784-6c7b3c6b7f5d?auto=format&fit=crop&w=400&q=80')
     },
     {
         'id': 2,
         'name': 'Laptop Pro',
         'category': 'Computers',
         'price': 1299,
-        'image': image_files.get('2', 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=400&q=80')
+        'image': image_files.get('laptop pro', 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=400&q=80')
     },
     {
         'id': 3,
         'name': 'Wireless Headphones',
         'category': 'Audio',
         'price': 199,
-        'image': image_files.get('3', 'https://images.unsplash.com/photo-1516393447469-5d9b2d1b3b45?auto=format&fit=crop&w=400&q=80')
+        'image': image_files.get('wireless headphones', 'https://images.unsplash.com/photo-1516393447469-5d9b2d1b3b45?auto=format&fit=crop&w=400&q=80')
     },
     {
         'id': 4,
         'name': 'Gaming Mouse', 'category': 'Accessories', 'price': 49,
-        'image': image_files.get('4', 'https://images.unsplash.com/photo-1526374875794-8f8f2c1b1b5a?auto=format&fit=crop&w=400&q=80')
+        'image': image_files.get('gaming mouse', 'https://images.unsplash.com/photo-1526374875794-8f8f2c1b1b5a?auto=format&fit=crop&w=400&q=80')
     },
     {
         'id': 5,
         'name': '4K Monitor', 'category': 'Computers', 'price': 399,
-        'image': image_files.get('5', 'https://images.unsplash.com/photo-1581092337487-6e5b2f0f3c7e?auto=format&fit=crop&w=400&q=80')
+        'image': image_files.get('4k monitor', 'https://images.unsplash.com/photo-1581092337487-6e5b2f0f3c7e?auto=format&fit=crop&w=400&q=80')
     },
     {
         'id': 6,
         'name': 'Bluetooth Speaker', 'category': 'Audio', 'price': 129,
-        'image': image_files.get('6', 'https://images.unsplash.com/photo-1552075179-1a5c5e1d0c7c?auto=format&fit=crop&w=400&q=80')
+        'image': image_files.get('bluetooth speaker', 'https://images.unsplash.com/photo-1552075179-1a5c5e1d0c7c?auto=format&fit=crop&w=400&q=80')
     }
 ]
 
