@@ -2,3 +2,4 @@ Task: Create a Local website with product images
 Result: PASS
 Errors: 0
 Wall-clock: ~21 min
+problems : 
