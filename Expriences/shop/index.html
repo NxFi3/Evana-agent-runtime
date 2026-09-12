@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Product Store</title>
+<style>
+  body {font-family: Arial, sans-serif; margin: 20px;}
+  .product {border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; display: flex;}
+  .product img {max-width: 150px; max-height: 150px; margin-right: 10px;}
+  .product-details {flex: 1;}
+  .cart {position: fixed; top: 10px; right: 10px; background: #f90; padding: 5px 10px; border-radius: 5px;}
+</style>
+</head>
+<body>
+<div class="cart">Cart: <span id="cart-count">0</span></div>
+<h1>Product Store</h1>
+<div id="products"></div>
+<script>
+const products = [
+  {name: '4K Monitor', image: 'product_images/4K%20Monitor.jpeg'},
+  {name: 'Bluetooth Speaker', image: 'product_images/Bluetooth%20Speaker.jpeg'},
+  {name: 'Gaming Mouse', image: 'product_images/Gaming%20Mouse.jpeg'},
+  {name: 'Laptop Pro', image: 'product_images/Laptop%20Pro.jpeg'},
+  {name: 'Wireless Headphones', image: 'product_images/Wireless%20Headphones.jpeg'},
+  {name: 'smartphone x', image: 'product_images/smartphone%20x.jpeg'}
+];
+let cartCount = 0;
+const productsDiv = document.getElementById('products');
+products.forEach(p => {
+  const div = document.createElement('div');
+  div.className = 'product';
+  const img = document.createElement('img');
+  img.src = p.image;
+  img.alt = p.name;
+  const details = document.createElement('div');
+  details.className = 'product-details';
+  const name = document.createElement('h3');
+  name.textContent = p.name;
+  const qty = document.createElement('input');
+  qty.type = 'number';
+  qty.min = '1';
+  qty.value = '1';
+  qty.style.width = '50px';
+  const btn = document.createElement('button');
+  btn.textContent = 'Add to Cart';
+  btn.onclick = () => {
+    const quantity = parseInt(qty.value) || 1;
+    cartCount += quantity;
+    document.getElementById('cart-count').textContent = cartCount;
+    alert(`${quantity} x ${p.name} added to cart.`);
+  };
+  details.appendChild(name);
+  details.appendChild(qty);
+  details.appendChild(btn);
+  div.appendChild(img);
+  div.appendChild(details);
+  productsDiv.appendChild(div);
+});
+</script>
+</body>
+</html>

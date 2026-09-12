@@ -1,5 +1,16 @@
 Task: Create a Local website with product images
 Result: PASS
+Model: gpt-oss:20b
 Errors: 0
 Wall-clock: ~21 min
-problems : 
+Problems:
+- Redundant file inspection during execution
+- Repeated modifications to the same files
+- Inefficient verification trajectory
+- High latency between consecutive agent actions
+- Context accumulation across iterations
+
+Runtime limitations identified:
+- No explicit state representation
+- No structured completion/verification mechanism
+- No parallel execution for independent tool calls
