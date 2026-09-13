@@ -46,16 +46,15 @@ class Loop:
             metadata=metadata or {}
         )
 
-    def _execute_tools(self, tool_calls: list[dict[str, Any]]):
+    def _execute_tools(self, tool_calls: list[Any]):
         execution = self.tool.execute(tool_calls)
-
         calls = execution.get("calls", [])
         results = execution.get("results", [])
 
         for call, result in zip(calls, results):
-            tool_name = call.get("name", "")
-            arguments = call.get("arguments", {})
-            tool_call_id = call.get("id")
+            function = call.get("function", {})
+            tool_name = function.get("name", "")
+            arguments = function.get("arguments", {})
 
             self.state.last_action = f"{tool_name}({arguments})"
             self.state.history["tool_calls"].append({
@@ -69,9 +68,9 @@ class Loop:
                     f"{tool_name}({arguments})",
                     "llm",
                     {
+                        "tool_call": call,
                         "tool_name": tool_name,
-                        "arguments": arguments,
-                        "tool_call_id": tool_call_id
+                        "arguments": arguments
                     }
                 )
             )
@@ -79,15 +78,12 @@ class Loop:
 
             content = getattr(result, "content", str(result))
             metadata = getattr(result, "metadata", {}) or {}
-
             metadata = {
                 **metadata,
+                "tool_call": call,
                 "tool_name": tool_name,
                 "arguments": arguments
             }
-
-            if tool_call_id is not None:
-                metadata["tool_call_id"] = tool_call_id
 
             self.state.last_observation = content
 
@@ -95,32 +91,26 @@ class Loop:
                 self.state.history["failures"].append({
                     "tool": tool_name,
                     "arguments": arguments,
-                    "result": content
-                })
+                    "result": content})
 
             self.memory.step(
                 self._create_event(
                     "tool_result",
                     content,
                     "tool",
-                    metadata
-                )
-            )
+                    metadata))
             self.memory.backward()
 
         return execution
 
-    def Process(
-        self,
-        user_input: MemoryEvent,
-        image: np.ndarray = None
-    ):
+    def Process(self,user_input: MemoryEvent,working_space:str,image: np.ndarray = None):
         self.state = AgentState(task=user_input.content)
         self.state.phase = "executing"
         self.state.iteration = 0
         self.state.progress = 0.0
         self.state.completion = False
-
+        self.state.workspace_root = working_space
+        self.ctx.set_workspace(self.state.workspace_root)
         if not self.memory.step(user_input):
             self.logger.error("Failed to store user input in memory.")
             self.state.phase = "failed"
@@ -205,7 +195,7 @@ class Loop:
                     self.state.progress
                     + (successful_tools / total_tools) * 0.05
                 )
-
+            
             context = self.ctx.build_agent_context(
                 PreviousResponse=execution,
                 User_input=user_input.content,

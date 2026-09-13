@@ -47,7 +47,8 @@ class ContextManager:
             "role": "assistant",
             "content": compacted_text
         }]
-
+    def set_workspace(self, root: str, state: str = ""):
+        self.context_builder.set_workspace(root, state)
     def build_agent_context(
         self,
         PreviousResponse: Dict[str, Any],
@@ -93,7 +94,6 @@ class ContextManager:
                 trajectory
             )
 
-        messages = self.context_builder.context_window.prompt()
 
         if not self.check_context_length(PreviousResponse):
             remaining_tokens = self.token_budget.remaining_budget(

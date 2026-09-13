@@ -21,7 +21,7 @@ class Agent:
         self.logger = get_logger("[AGENT]")
         self.steps = self.Memory.tick
         self.loop.get_tool_definitions()
-
+        self.workspace_root = 'EvanaAgent'
     def _create_event(
         self,
         event_type: str,
@@ -39,6 +39,8 @@ class Agent:
         )
 
     def act(self,user_input: MemoryEvent,image: np.ndarray = None):
-        response = self.loop.Process(user_input,image)
+        response = self.loop.Process(user_input,self.workspace_root,image)
         return response
 
+    def set_workspace(self, path: str):
+        self.workspace_root = path

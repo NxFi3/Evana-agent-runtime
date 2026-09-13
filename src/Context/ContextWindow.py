@@ -1,7 +1,6 @@
 import platform
 from typing import Any, Dict, List
 
-
 Message = Dict[str, Any]
 
 
@@ -10,6 +9,8 @@ class ContextWindow:
         self.os_name = platform.system()
         self.system = ""
         self.task = ""
+        self.workspace_root = ""
+        self.workspace_state = ""
         self.trajectory: List[Message] = []
         self.plans = ""
         self.user = ""
@@ -19,6 +20,10 @@ class ContextWindow:
 
     def set_task(self, content: str):
         self.task = content or ""
+
+    def set_workspace(self, root: str, state: str = ""):
+        self.workspace_root = root or ""
+        self.workspace_state = state or ""
 
     def set_trajectory(self, content: List[Message]):
         self.trajectory = list(content or [])
@@ -31,14 +36,22 @@ class ContextWindow:
 
     def prompt(self) -> List[Message]:
         messages: List[Message] = []
-        system_content = f"OS: {self.os_name}\n{self.system}".strip()
+        system_parts = [f"OS: {self.os_name}",self.system,self.task]
+
+        if self.workspace_root:
+            system_parts.append(f"WORKSPACE ROOT: {self.workspace_root}")
+
+        if self.workspace_state:
+            system_parts.append(f"WORKSPACE STATE:\n{self.workspace_state}")
+        system_content = "\n\n".join(part.strip() for part in system_parts if part and part.strip())
+
         if system_content:
-            messages.append({"role": "system", "content": system_content})
-        if self.task:
-            messages.append({"role": "developer", "content": self.task})
+            messages.append({"role": "system","content": system_content})
+
         if self.user:
-            messages.append({"role": "user", "content": self.user})
+            messages.append({"role": "user","content": self.user})
+
         if self.plans:
-            messages.append({"role": "assistant", "content": self.plans})
+            messages.append({"role": "assistant","content": self.plans})
         messages.extend(self.trajectory)
         return messages
