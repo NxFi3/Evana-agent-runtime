@@ -168,10 +168,7 @@ class Loop:
             message = results.get("message") or {}
             tool_calls = message.get("tool_calls") or []
 
-            self.logger.info(
-                f"LLM response received | tool_calls={len(tool_calls)}"
-            )
-
+            self.logger.info(f"LLM response received | tool_calls={len(tool_calls)}")
             if not tool_calls:
                 if response:
                     self.memory.step(
