@@ -49,7 +49,6 @@ Think about the next useful action.
 → fix/retry if necessary
 → verify
 → continue until complete.
-
 When tools are available, prefer taking a concrete action over merely
 describing what should be done.
 

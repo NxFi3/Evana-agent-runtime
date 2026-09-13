@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}ShopBase{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-y3yV+f4a3h4jJtR+F5G1B9e0V4XQnX+V6N5pP6Zt6GzX9sC6vY+Xh3Yq9K+3vY+M+F5l5n9z+V9+Z+z5+5Q==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="{{ url_for('index') }}" class="navbar-brand">ShopBase</a>
+            <ul class="navbar-nav">
+                <li class="nav-item"><a href="{{ url_for('cart') }}" class="nav-link"><i class="fa-solid fa-cart-shopping"></i> Cart</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main class="container mt-4">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-messages">
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer mt-5 py-3 bg-light text-center">
+        <div class="container">
+            <span class="text-muted">© 2024 ShopBase. All rights reserved.</span>
+        </div>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

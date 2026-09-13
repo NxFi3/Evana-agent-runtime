@@ -36,9 +36,9 @@ class ContextWindow:
             messages.append({"role": "system", "content": system_content})
         if self.task:
             messages.append({"role": "developer", "content": self.task})
+        if self.user:
+            messages.append({"role": "user", "content": self.user})
         if self.plans:
             messages.append({"role": "assistant", "content": self.plans})
         messages.extend(self.trajectory)
-        if self.user:
-            messages.append({"role": "user", "content": self.user})
         return messages
