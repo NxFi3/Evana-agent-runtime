@@ -25,12 +25,7 @@ class ToolManager:
             try:
                 name, args = self.dispatcher.dispatch(tool_call)
                 self.logger.info(f'Executed {name} -> {args}')
-                calls.append(
-                    {
-                        "name": name,
-                        "arguments": args
-                    }
-                )
+                calls.append(tool_call)
 
                 tool = self.toolregistry.get(name)
 

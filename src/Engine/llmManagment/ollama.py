@@ -18,8 +18,7 @@ class OllamaProvider:
         model_context_length = self.get_model_context_length()
 
         self.options = {
-            "temperature": 0.7,
-            "repetition_penalty": 1.1,
+            "temperature": 0.3
         }
 
         if model_context_length is not None:
