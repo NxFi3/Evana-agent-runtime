@@ -23,11 +23,6 @@ class Agent:
         self.logger = get_logger("[AGENT]")
         self.steps = self.Memory.tick
         self.loop.get_tool_definitions()
-        self._tool_definitions()
-
-    def _tool_definitions(self):
-        self.tool_definitions = self.TlManager.get_tools()
-
 
     def _create_event(
         self,

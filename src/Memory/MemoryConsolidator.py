@@ -161,7 +161,7 @@ class MemoryConsolidator:
         )
 
         response = self.llmprovider.generate(
-            prompt
+            [{'role':'system','content':prompt}]
         ).get('response', '')
 
         return self.parser.parse(

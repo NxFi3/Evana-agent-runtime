@@ -36,43 +36,77 @@ class ContextBuilder:
 
     def _event_to_message(self, event: MemoryEvent) -> Message:
         event_type = event.event_type.lower()
+
         if event_type == 'user_input':
-            return {"role": "user", "content": event.content}
+            return {
+                "role": "user",
+                "content": event.content
+            }
+
         if event_type == 'agent_action':
-            return {"role": "assistant", "content": event.content}
-        if event_type == 'tool_result':
-            message: Message = {"role": "tool", "content": event.content,'metadata':event.metadata}
-            tool_name = event.metadata.get("tool_name")
-            if tool_name:
-                message["name"] = tool_name
-            return message
+            return {
+                "role": "assistant",
+                "content": event.content
+            }
+
         if event_type == 'tool_call':
             tool_name = event.metadata.get("tool_name")
-            arguments = event.metadata.get("arguments")
+            arguments = event.metadata.get("arguments", {})
+            tool_call_id = event.metadata.get("tool_call_id", str(event.id))
+
             if tool_name:
                 return {
                     "role": "assistant",
                     "content": event.content,
                     "tool_calls": [{
-                        "id": str(event.metadata.get("tool_call_id", event.id)),
+                        "id": str(tool_call_id),
                         "type": "function",
                         "function": {
                             "name": tool_name,
-                            "arguments": arguments if arguments is not None else {},
-                        },
-                    }],
+                            "arguments": arguments
+                        }
+                    }]
                 }
-            return {"role": "assistant", "content": event.content}
+
+            return {
+                "role": "assistant",
+                "content": event.content
+            }
+
+        if event_type == 'tool_result':
+            message = {
+                "role": "tool",
+                "tool_name": event.metadata.get("tool_name", ""),
+                "content": event.content
+            }
+
+            tool_call_id = event.metadata.get("tool_call_id")
+            if tool_call_id:
+                message["tool_call_id"] = str(tool_call_id)
+
+            return message
+
         return {
             "role": "assistant",
-            "content": f"Step {event.step}: {event.event_type} {event.content}".strip(),
+            "content": f"Step {event.step}: {event.event_type} {event.content}".strip()
         }
 
-    def build_context(self, User_input: str = '', STM_Result: List[MemoryEvent] = None):
+    def build_context(
+        self,
+        User_input: str = '',
+        STM_Result: List[MemoryEvent] = None
+    ):
         events = STM_Result or []
-        trajectory = [self._event_to_message(event) for event in events]
+
+        trajectory = [
+            self._event_to_message(event)
+            for event in events
+            if event.event_type.lower() != "user_input"
+        ]
+
         self.context_window.set_trajectory(trajectory)
         self.context_window.set_user(User_input)
         self.context_window.set_system(self._load_tool_instructions())
         self.context_window.set_task(self._load_developer_instructions())
+
         return self.context_window.prompt()
