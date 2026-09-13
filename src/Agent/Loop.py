@@ -183,7 +183,7 @@ class Loop:
                     )
                     self.memory.backward()
 
-                self.state.phase = "completed"
+                self.state.phase = "not_completed"
                 self.state.completion = True
                 self.state.progress = 1.0
 

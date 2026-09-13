@@ -10,9 +10,7 @@ from src.Engine.llmManagment.LlmProvider import LlmProvider
 from src.Tools.ToolManager import ToolManager
 from src.Utils.logger import get_logger
 
-
 class Agent:
-
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.Engine = LlmProvider(self.config)

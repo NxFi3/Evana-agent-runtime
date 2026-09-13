@@ -48,13 +48,8 @@ class ToolManager:
             except Exception as e:
                 self.logger.error(f"Tool execution error: {e}")
 
-                results.append(
-                    ToolResult(
-                        success=False,
-                        content=f"Tool execution error: {e}"
-                    )
-                )
-
+                results.append(ToolResult(success=False,content=f"Tool execution error: {e}"))
+                calls.append(tool_call)
         return {
             "calls": calls,
             "results": results
