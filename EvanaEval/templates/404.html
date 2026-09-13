@@ -1,0 +1,7 @@
+# EvanaEval/templates/404.html
+{% extends "base.html" %}
+{% block title %}Not Found{% endblock %}
+{% block content %}
+<h1>404 - Page Not Found</h1>
+<a href="{{ url_for('index') }}">Back to dashboard</a>
+{% endblock %}

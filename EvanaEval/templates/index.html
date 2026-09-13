@@ -1,0 +1,27 @@
+# EvanaEval/templates/index.html
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1>Personal Finance Dashboard</h1>
+<p>Income: ${{ total_income }} | Expenses: ${{ total_expense }} | Balance: ${{ balance }}</p>
+<a href="{{ url_for('add_transaction') }}" class="btn btn-primary">Add Transaction</a>
+<table class="table table-striped mt-3">
+  <thead><tr><th>Date</th><th>Amount</th><th>Category</th><th>Description</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for t in transactions %}
+  <tr>
+    <td>{{ t.date }}</td>
+    <td>{{ t.amount }}</td>
+    <td>{{ t.category.name }}</td>
+    <td>{{ t.description }}</td>
+    <td>
+      <a href="{{ url_for('edit_transaction', tid=t.id) }}" class="btn btn-sm btn-secondary">Edit</a>
+      <form action="{{ url_for('delete_transaction', tid=t.id) }}" method="post" style="display:inline;">
+        <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Delete?')">Delete</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

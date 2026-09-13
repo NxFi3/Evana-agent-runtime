@@ -9,7 +9,9 @@
 
   "memory": {},
 
-  "context": {},
+  "context": {
+    "safe_margin": 16384
+  },
 
   "retrieval": {},
 

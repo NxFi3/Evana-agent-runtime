@@ -50,8 +50,8 @@ class ContextWindow:
 
         if self.user:
             messages.append({"role": "user","content": self.user})
-
         if self.plans:
             messages.append({"role": "assistant","content": self.plans})
+
         messages.extend(self.trajectory)
         return messages
