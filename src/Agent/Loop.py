@@ -74,7 +74,6 @@ class Loop:
                     }
                 )
             )
-            self.memory.backward()
 
             content = getattr(result, "content", str(result))
             metadata = getattr(result, "metadata", {}) or {}
@@ -91,19 +90,21 @@ class Loop:
                 self.state.history["failures"].append({
                     "tool": tool_name,
                     "arguments": arguments,
-                    "result": content})
+                    "result": content
+                })
 
             self.memory.step(
                 self._create_event(
                     "tool_result",
                     content,
                     "tool",
-                    metadata))
-            self.memory.backward()
+                    metadata
+                )
+            )
 
         return execution
 
-    def Process(self,user_input: MemoryEvent,working_space:str,image: np.ndarray = None):
+    def Process(self, user_input: MemoryEvent, working_space: str, image: np.ndarray = None):
         self.state = AgentState(task=user_input.content)
         self.state.phase = "executing"
         self.state.iteration = 0
@@ -111,12 +112,11 @@ class Loop:
         self.state.completion = False
         self.state.workspace_root = working_space
         self.ctx.set_workspace(self.state.workspace_root)
+
         if not self.memory.step(user_input):
             self.logger.error("Failed to store user input in memory.")
             self.state.phase = "failed"
             return ""
-
-        self.memory.backward()
 
         context = self.ctx.build_agent_context(
             PreviousResponse={},
@@ -158,7 +158,10 @@ class Loop:
             message = results.get("message") or {}
             tool_calls = message.get("tool_calls") or []
 
-            self.logger.info(f"LLM response received | tool_calls={len(tool_calls)}")
+            self.logger.info(
+                f"LLM response received | tool_calls={len(tool_calls)}"
+            )
+
             if not tool_calls:
                 if response:
                     self.memory.step(
@@ -166,17 +169,13 @@ class Loop:
                             "agent_action",
                             response,
                             "llm",
-                            {
-                                "thinking": results.get("thinking")
-                            }
+                            {"thinking": results.get("thinking")}
                         )
                     )
-                    self.memory.backward()
 
                 self.state.phase = "not_completed"
                 self.state.completion = True
                 self.state.progress = 1.0
-
                 return response
 
             execution = self._execute_tools(tool_calls)
@@ -186,7 +185,6 @@ class Loop:
                 for result in execution.get("results", [])
                 if getattr(result, "success", True)
             )
-
             total_tools = len(execution.get("results", []))
 
             if total_tools:
@@ -195,9 +193,9 @@ class Loop:
                     self.state.progress
                     + (successful_tools / total_tools) * 0.05
                 )
-            
+
             context = self.ctx.build_agent_context(
-                PreviousResponse=execution,
+                PreviousResponse=results,
                 User_input=user_input.content,
                 STM_Result=self.memory.get_previous_events(100)
             )
