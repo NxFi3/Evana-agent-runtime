@@ -1,5 +1,0 @@
-# EvanaEval/requirements.txt
-Flask==3.0.0
-Flask-WTF==1.2.1
-Flask-SQLAlchemy==3.1.1
-WTForms==3.1.2

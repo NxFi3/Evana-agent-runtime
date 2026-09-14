@@ -39,7 +39,6 @@ class ContextManager:
 
         context_config = self.config.get("context") or {}
 
-
         self.compaction_target_tokens = max(
             512,
             int(
@@ -47,7 +46,9 @@ class ContextManager:
                     "compaction_target_tokens",
                     min(
                         4096,
-                        int(self.token_budget.budget * 0.05),
+                        int(
+                            self.token_budget.budget * 0.05
+                        )
                     ),
                 )
             ),
@@ -73,6 +74,21 @@ class ContextManager:
             List[Message]
         ] = None
 
+    def set_workspace(
+        self,
+        root: str,
+        state: str = "",
+    ):
+        """
+        Compatibility wrapper used by Loop.
+
+        Workspace information is ultimately stored in ContextBuilder /
+        ContextWindow and only the minimal workspace context is rendered.
+        """
+        self.context_builder.set_workspace(
+            root,
+            state,
+        )
 
     def _build_trajectory(
         self,
@@ -84,7 +100,6 @@ class ContextManager:
             for event in events
             if event.event_type.lower() != "user_input"
         ]
-
 
     def _message_to_compaction_text(
         self,
@@ -128,7 +143,6 @@ class ContextManager:
 
         return " ".join(parts)
 
-
     def _compact_trajectory(
         self,
         trajectory: List[Message],
@@ -164,7 +178,6 @@ class ContextManager:
             }
         ]
 
-
     def _build_context(
         self,
         user_input: str,
@@ -180,7 +193,6 @@ class ContextManager:
             compacted_history=compacted_history,
         )
 
-
     def _estimate_tokens(
         self,
         messages: List[Message],
@@ -189,7 +201,6 @@ class ContextManager:
         return self.token_budget.estimate_messages_tokens(
             messages
         )
-
 
     def _compact_if_needed(
         self,
@@ -206,7 +217,6 @@ class ContextManager:
             messages
         )
 
-
         if estimated_tokens <= self.token_budget.budget:
             return messages
 
@@ -217,29 +227,18 @@ class ContextManager:
             f"budget={self.token_budget.budget}"
         )
 
+        # Keep a small recent raw tail.
         keep_count = min(
             self.recent_messages_to_keep,
             len(recent_events),
         )
 
         if keep_count > 0:
-
-            events_to_compact = (
-                recent_events[:-keep_count]
-            )
-
-            recent_events_to_keep = (
-                recent_events[-keep_count:]
-            )
-
+            events_to_compact = recent_events[:-keep_count]
+            recent_events_to_keep = recent_events[-keep_count:]
         else:
-
-            events_to_compact = list(
-                recent_events
-            )
-
+            events_to_compact = list(recent_events)
             recent_events_to_keep = []
-
 
         trajectory_to_compact = (
             compacted_history
@@ -249,14 +248,11 @@ class ContextManager:
         )
 
         if not trajectory_to_compact:
-
             logger.warning(
-                "Context exceeds budget but there is "
-                "no older trajectory available for compaction."
+                "Context exceeds budget but there is no "
+                "older trajectory available for compaction."
             )
-
             return messages
-
 
         compacted = self._compact_trajectory(
             trajectory_to_compact,
@@ -264,28 +260,24 @@ class ContextManager:
         )
 
         if not compacted:
-
             logger.warning(
                 "Context compaction failed; "
                 "keeping existing context."
             )
-
             return messages
-
 
         self.compacted_trajectory = compacted
 
+        # Only events actually moved into the compacted state
+        # receive a compacted boundary.
         if events_to_compact:
-
             self.compacted_until_step = (
                 events_to_compact[-1].step
             )
 
-
         recent_to_keep = self._build_trajectory(
             recent_events_to_keep
         )
-
 
         rebuilt = self._build_context(
             user_input=user_input,
@@ -293,7 +285,6 @@ class ContextManager:
             compacted_history=compacted,
             recent_trajectory=recent_to_keep,
         )
-
 
         final_estimate = self._estimate_tokens(
             rebuilt
@@ -310,7 +301,6 @@ class ContextManager:
 
         return rebuilt
 
-
     def build_agent_context(
         self,
         previous_response: Optional[LLMResult],
@@ -319,19 +309,18 @@ class ContextManager:
         agent_state: Optional[AgentState] = None,
     ) -> List[Message]:
 
+        # Calibrate using the real prompt token count from
+        # the previous Ollama inference.
         if (
             previous_response is not None
             and self._last_built_context is not None
         ):
-
             self.token_budget.calibrate_from_response(
                 self._last_built_context,
                 previous_response,
             )
 
-
         events = stm_result or []
-
 
         non_user_events = [
             event
@@ -342,10 +331,7 @@ class ContextManager:
         if self.compacted_trajectory is None:
 
             compacted_history = []
-
-            recent_events = list(
-                non_user_events
-            )
+            recent_events = list(non_user_events)
 
         else:
 
@@ -359,11 +345,9 @@ class ContextManager:
                 if event.step > self.compacted_until_step
             ]
 
-
         recent_trajectory = self._build_trajectory(
             recent_events
         )
-
 
         messages = self._build_context(
             user_input=user_input,
@@ -371,7 +355,6 @@ class ContextManager:
             compacted_history=compacted_history,
             recent_trajectory=recent_trajectory,
         )
-
 
         messages = self._compact_if_needed(
             messages=messages,
@@ -387,7 +370,6 @@ class ContextManager:
             agent_state=agent_state,
         )
 
-
         estimated_tokens = self._estimate_tokens(
             messages
         )
@@ -401,7 +383,8 @@ class ContextManager:
             f"{self.token_budget.chars_per_token:.3f}"
         )
 
+        # Exact prompt that is about to be sent to the provider.
+        # Next iteration uses prompt_eval_count to calibrate estimation.
         self._last_built_context = messages
-
 
         return messages

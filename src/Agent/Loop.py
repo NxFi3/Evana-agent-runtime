@@ -366,21 +366,31 @@ class Loop:
                 user_input=user_input.content,
                 previous_response=previous_response,
             )
-            try:
-                result: LLMResult = self.llm.generate(
-                    context,
-                    self._get_tool_definitions(),
-                    image,
-                )
+            result: LLMResult | None = None
 
-            except Exception as e:
-                self.logger.error(
-                    f"LLM generation failed: {e}"
-                )
+            for attempt in range(1, 4):
+                try:
+                    result = self.llm.generate(
+                        context,
+                        self._get_tool_definitions(),
+                        image,
+                    )
 
-                self.state.phase = "failed"
+                    break
 
-                return final_response
+                except Exception as e:
+                    self.logger.warning(
+                        f"LLM generation failed "
+                        f"(attempt {attempt}/3): {e}"
+                    )
+
+                    if attempt == 3:
+                        self.logger.error(
+                            "LLM generation failed after 3 attempts."
+                        )
+
+                        self.state.phase = "failed"
+                        return final_response
 
             if not isinstance(result, LLMResult):
                 self.logger.error(
