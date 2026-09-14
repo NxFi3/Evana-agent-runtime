@@ -1,4 +1,4 @@
-#src/Engine/LLMResult.py
+#src/Engine/llmManagment/LLMResult.py
 
 from dataclasses import dataclass
 from typing import Any , Dict
@@ -8,5 +8,5 @@ class LLMResult:
     message: Dict
     tool_calls: list
     thinking: str | None
-    usage: Dict
+    usage: int
     raw: Any = None

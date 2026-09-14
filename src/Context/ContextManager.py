@@ -4,7 +4,7 @@ from src.Context.ContextBuilder import ContextBuilder
 from src.Context.ContextWindow import ContextWindow, Message
 from src.Context.Compactor import Compactor
 from src.Context.TokenBudget import TokenBudget
-from src.Engine.llmManagment.LlmProvider import LlmProvider
+from Engine.LlmProviderManager import LlmProvider
 
 logger = get_logger("[CONTEXTMANAGER]")
 

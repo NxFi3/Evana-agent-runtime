@@ -2,7 +2,7 @@
 
 from typing import Any, Dict
 from src.Utils.logger import get_logger
-from src.Engine.llmManagment.LlmProvider import LlmProvider
+from Engine.LlmProviderManager import LlmProvider
 
 logger = get_logger("[TOKENBUDGET]")
 

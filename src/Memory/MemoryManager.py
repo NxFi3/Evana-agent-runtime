@@ -12,7 +12,7 @@ from src.Memory.Retrieval import Retrieval
 from src.Memory.ShortTermMemory.STM import STM
 from src.Memory.ShortTermMemory.MemoryCache import MemoryCache
 from src.Memory.MemoryConsolidator import MemoryConsolidator
-from src.Engine.llmManagment.LlmProvider import LlmProvider
+from Engine.LlmProviderManager import LlmProvider
 from src.Engine.EmbeddingModel import EmbeddingModel
 from src.Engine.RerankerModel import Reranker
 from src.Memory.MemoryParser import MemoryParser

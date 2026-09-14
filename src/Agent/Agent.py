@@ -6,7 +6,7 @@ from src.Agent.Loop import Loop
 from src.Context.ContextManager import ContextManager
 from src.Memory.MemoryManager import MemoryManager
 from src.Memory.MemoryEvent import MemoryEvent
-from src.Engine.llmManagment.LlmProvider import LlmProvider
+from Engine.LlmProviderManager import LlmProvider
 from src.Tools.ToolManager import ToolManager
 from src.Utils.logger import get_logger
 

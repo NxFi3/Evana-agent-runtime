@@ -5,7 +5,7 @@ import numpy as np
 from src.Tools.ToolManager import ToolManager
 from src.Memory.MemoryManager import MemoryManager
 from src.Context.ContextManager import ContextManager
-from src.Engine.llmManagment.LlmProvider import LlmProvider
+from Engine.LlmProviderManager import LlmProvider
 from src.Memory.MemoryEvent import MemoryEvent
 from src.Agent.AgentState import AgentState
 from src.Utils.logger import get_logger
