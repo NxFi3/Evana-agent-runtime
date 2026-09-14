@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Transactions{% endblock %}
+{% block content %}
+<h1 class="mt-4">Transactions</h1>
+<form method="get" class="row g-3 mb-3">
+  <div class="col-md-3">
+    <label for="category" class="form-label">Category</label>
+    <select name="category" id="category" class="form-select">
+      <option value="">All</option>
+      {% for c in categories %}
+        <option value="{{ c.id }}" {% if selected_category == c.id %}selected{% endif %}>{{ c.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <label for="start" class="form-label">Start Date</label>
+    <input type="date" name="start" id="start" class="form-control" value="{{ start_date }}">
+  </div>
+  <div class="col-md-3">
+    <label for="end" class="form-label">End Date</label>
+    <input type="date" name="end" id="end" class="form-control" value="{{ end_date }}">
+  </div>
+  <div class="col-md-3 d-flex align-items-end">
+    <button type="submit" class="btn btn-primary">Filter</button>
+    <a href="{{ url_for('transaction_list') }}" class="btn btn-secondary ms-2">Clear</a>
+  </div>
+</form>
+<table class="table table-striped">
+  <thead>
+    <tr>
+      <th>Date</th>
+      <th>Description</th>
+      <th>Category</th>
+      <th>Type</th>
+      <th>Amount</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in transactions %}
+    <tr>
+      <td>{{ t.date.strftime('%Y-%m-%d') }}</td>
+      <td>{{ t.description or '' }}</td>
+      <td>{{ t.category.name if t.category else 'Uncategorized' }}</td>
+      <td>{{ t.type.title() }}</td>
+      <td>${{ t.amount }}</td>
+      <td>
+        <a href="{{ url_for('edit_transaction', id=t.id) }}" class="btn btn-sm btn-outline-secondary">Edit</a>
+        <form action="{{ url_for('delete_transaction', id=t.id) }}" method="post" style="display:inline;" onsubmit="return confirm('Delete this transaction?');">
+          <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="text-center">No transactions found.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<a href="{{ url_for('new_transaction') }}" class="btn btn-primary">Add Transaction</a>
+{% endblock %}

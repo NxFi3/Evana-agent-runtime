@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1 class="mt-4">Dashboard</h1>
+<div class="row mt-4">
+  <div class="col-md-4">
+    <div class="card text-bg-success mb-3">
+      <div class="card-header">Total Income</div>
+      <div class="card-body">
+        <h5 class="card-title">${{ income|round(2) }}</h5>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card text-bg-danger mb-3">
+      <div class="card-header">Total Expenses</div>
+      <div class="card-body">
+        <h5 class="card-title">${{ expense|round(2) }}</h5>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card text-bg-info mb-3">
+      <div class="card-header">Current Balance</div>
+      <div class="card-body">
+        <h5 class="card-title">${{ balance|round(2) }}</h5>
+      </div>
+    </div>
+  </div>
+</div>
+<a href="{{ url_for('new_transaction') }}" class="btn btn-primary mt-3">Add Transaction</a>
+{% endblock %}
