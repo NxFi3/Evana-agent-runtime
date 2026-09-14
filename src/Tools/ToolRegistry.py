@@ -103,17 +103,17 @@ class ToolRegistry:
         discovered_tools = self._discover_tools()
 
         for tool in discovered_tools:
-            self.tools[tool.name] = tool
+            self.tools[tool.name.lower()] = tool
 
         self.logger.info(
             f"Discovered {len(discovered_tools)} tool(s)"
         )
 
+    def is_available(self, toolname: str):
+        return toolname.strip().lower() in self.tools
 
-    def is_available(self,toolname:str):
-        return toolname in self.tools
     def get(self, toolname: str):
-        return self.tools.get(toolname)
-        
+        return self.tools.get(toolname.strip().lower())
+            
     def get_definitions(self):
         return [tool.get_definition() for tool in self.tools.values()]

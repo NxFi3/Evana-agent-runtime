@@ -15,10 +15,9 @@ from src.Engine.LlmProviderManager import LlmProvider
 from src.Engine.providers.LLMResult import LLMResult
 
 
-
-
-total_time_wasted_here = 12
 class Loop:
+
+    FINISH_TOOL_NAME = "finish"
 
     def __init__(
         self,
@@ -66,12 +65,49 @@ class Loop:
             )
         )
 
+
+    def _finish_definition(self) -> dict:
+        """
+        Control tool used only by Loop to terminate the agent run.
+
+        This is intentionally NOT registered in ToolManager/ToolRegistry.
+        """
+        return {
+            "type": "function",
+            "function": {
+                "name": self.FINISH_TOOL_NAME,
+                "description": (
+                    "Finish the task only when all explicit requirements "
+                    "have been implemented, tested, and verified. "
+                    "Do not call this while work remains."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "summary": {
+                            "type": "string",
+                            "description": (
+                                "Concise summary of the completed and "
+                                "verified work."
+                            ),
+                        }
+                    },
+                    "required": ["summary"],
+                },
+            },
+        }
+
     def _get_tool_definitions(self) -> list[dict]:
 
         if self.tool_definitions is None:
             self.tool_definitions = self.tools.get_tools()
 
-        return self.tool_definitions
+
+        return [
+            *self.tool_definitions,
+            self._finish_definition(),
+        ]
+
 
     def _create_event(
         self,
@@ -146,9 +182,42 @@ class Loop:
         )
 
         return (
-            name,
+            name.strip().lower(),
             str(arguments),
         )
+
+    def _is_finish_call(
+        self,
+        tool_call: Any,
+    ) -> bool:
+
+        name, _ = self._get_tool_call_data(
+            tool_call
+        )
+
+        return (
+            str(name or "")
+            .strip()
+            .lower()
+            == self.FINISH_TOOL_NAME
+        )
+
+    def _finish_summary(
+        self,
+        tool_call: Any,
+        fallback: str = "",
+    ) -> str:
+
+        _, arguments = self._get_tool_call_data(
+            tool_call
+        )
+
+        if isinstance(arguments, dict):
+            summary = arguments.get("summary", "")
+            if summary:
+                return str(summary).strip()
+
+        return str(fallback or "").strip()
 
     def _preview_tool_result(
         self,
@@ -193,6 +262,7 @@ class Loop:
             + content[-tail:]
         )
 
+
     def _refresh_workspace_files(self):
 
         if self.state is None:
@@ -220,6 +290,7 @@ class Loop:
         try:
 
             for current_root, dirs, filenames in os.walk(root):
+
                 dirs[:] = [
                     directory
                     for directory in dirs
@@ -261,13 +332,27 @@ class Loop:
             self.logger.warning(
                 f"Failed to refresh workspace files: {e}"
             )
+
+
     def _execute_tools(
         self,
         tool_calls: list[Any],
     ) -> dict:
 
+        executable_calls = [
+            call
+            for call in tool_calls
+            if not self._is_finish_call(call)
+        ]
+
+        if not executable_calls:
+            return {
+                "calls": [],
+                "results": [],
+            }
+
         execution = self.tools.execute(
-            tool_calls
+            executable_calls
         )
 
         calls = execution.get(
@@ -347,25 +432,35 @@ class Loop:
                     **metadata,
                     "truncated": True,
                     "original_length": len(content),
-                    "stored_length": len(preview)}
+                    "stored_length": len(preview),
+                }
 
             self.state.last_observation = preview
+
             if not success:
-                self.failed_tool_calls.add(self._tool_signature(call))
+
+                self.failed_tool_calls.add(
+                    self._tool_signature(call)
+                )
+
                 self.logger.warning(
                     f"Tool failed: "
-                    f"{tool_name}({arguments})")
+                    f"{tool_name}({arguments})"
+                )
 
             self.memory.step(
                 self._create_event(
                     event_type="tool_result",
                     content=preview,
                     source="tool",
-                    metadata=metadata))
+                    metadata=metadata,
+                )
+            )
 
         self._refresh_workspace_files()
 
         return execution
+
 
     def _build_context(
         self,
@@ -496,6 +591,46 @@ class Loop:
                 f"LLM response received | "
                 f"tool_calls={len(tool_calls)}"
             )
+
+            finish_calls = [
+                call
+                for call in tool_calls
+                if self._is_finish_call(call)
+            ]
+
+            if finish_calls:
+
+                finish_call = finish_calls[0]
+
+                summary = self._finish_summary(
+                    finish_call,
+                    fallback=final_response,
+                )
+
+                self.state.last_action = (
+                    f"{self.FINISH_TOOL_NAME}({summary})"
+                )
+
+                self.memory.step(
+                    self._create_event(
+                        event_type="agent_action",
+                        content=summary,
+                        source="llm",
+                        metadata={
+                            "control_signal": self.FINISH_TOOL_NAME,
+                            "tool_call": finish_call,
+                        },
+                    )
+                )
+
+                self.state.phase = "completed"
+                self.state.completion = True
+
+                self.logger.info(
+                    "Agent finished via explicit finish signal."
+                )
+
+                return summary
             if not tool_calls:
 
                 if final_response:
@@ -511,17 +646,49 @@ class Loop:
                             source="llm",
                             metadata={
                                 "thinking": result.thinking,
+                                "implicit_final": True,
                             },
                         )
                     )
 
-                self.state.phase = "completed"
-                self.state.completion = True
+                self.logger.warning(
+                    "Model returned no tool calls "
+                    "without explicit finish signal."
+                )
+                self.state.phase = "executing"
 
-                return final_response
+                previous_response = LLMResult(
+                    response=(
+                        "Continue working on the task. "
+                        "Do not describe remaining work. "
+                        "Use the available tools to implement, "
+                        "test, and verify every remaining requirement. "
+                        "Call finish only after the task is fully "
+                        "implemented and verified."
+                    ),
+                    message={
+                        "role": "system",
+                        "content": (
+                            "Continue working on the task. "
+                            "Do not describe remaining work. "
+                            "Use the available tools to implement, "
+                            "test, and verify every remaining requirement. "
+                            "Call finish only after the task is fully "
+                            "implemented and verified."
+                        ),
+                    },
+                    tool_calls=[],
+                    thinking=None,
+                    usage=0,
+                )
+
+                continue
             executable_calls = []
 
             for call in tool_calls:
+
+                if self._is_finish_call(call):
+                    continue
 
                 signature = (
                     self._tool_signature(call)
@@ -558,7 +725,6 @@ class Loop:
                     call
                 )
 
-
             if not executable_calls:
 
                 self.logger.warning(
@@ -579,9 +745,14 @@ class Loop:
 
             except Exception as e:
 
-                self.logger.error(f"Tool execution failed: {e}")
+                self.logger.error(
+                    f"Tool execution failed: {e}"
+                )
+
                 self.state.phase = "failed"
+
                 return final_response
+
         self.state.phase = "max_iterations"
         self.state.completion = False
 

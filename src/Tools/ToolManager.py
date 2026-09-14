@@ -24,6 +24,7 @@ class ToolManager:
         for tool_call in tool_calls:
             try:
                 name, args = self.dispatcher.dispatch(tool_call)
+                name = name.lower()
                 self.logger.info(f'Executed {name} -> {args}')
                 calls.append(tool_call)
 
