@@ -1,20 +1,19 @@
-# src/Tools/builtin/shell/shell.py
-
 import subprocess
 import time
 from pathlib import Path
 from typing import Optional
+import re
 
 from src.Tools.Tool import Tool
 from src.Tools.ToolResult import ToolResult
 
 
 class Shell(Tool):
-
     name = "Shell"
+    MAX_OUTPUT_CHARS = 12000
 
     description = (
-        "Execute a shell command and return its stdout, stderr, "
+        "Execute a shell command and return a bounded stdout/stderr result, "
         "exit code, and execution duration."
     )
 
@@ -53,6 +52,21 @@ class Shell(Tool):
         "required": ["command"],
     }
 
+    @classmethod
+    def _bounded_output(cls, value: str) -> tuple[str, bool]:
+        value = value or ""
+        if len(value) <= cls.MAX_OUTPUT_CHARS:
+            return value.rstrip(), False
+
+        head = cls.MAX_OUTPUT_CHARS // 2
+        tail = cls.MAX_OUTPUT_CHARS - head
+        return (
+            value[:head].rstrip()
+            + "\n\n... OUTPUT TRUNCATED ...\n\n"
+            + value[-tail:].lstrip(),
+            True,
+        )
+
     def execute(
         self,
         command: str,
@@ -60,33 +74,31 @@ class Shell(Tool):
         timeout: int = 120,
         confirm: str = "Y",
     ) -> ToolResult:
-
         BLOCKED_PATTERNS = [
-            r'rm\s+-rf\s+/',
-            r':\(\)\{.*\};:',  # fork bomb
-            r'mkfs\.',
-            r'dd\s+if=.*of=/dev/',
+            r"rm\s+-rf\s+/",
+            r":\(\)\{.*\};:",
+            r"mkfs\.",
+            r"dd\s+if=.*of=/dev/",
         ]
 
-        import re
         for pattern in BLOCKED_PATTERNS:
-            if re.search(pattern, command):
+            if re.search(pattern, command or ""):
                 return ToolResult(
                     success=False,
                     content=f"Command blocked for safety: {command}"
                 )
+
         if not command or not command.strip():
             return ToolResult(
                 success=False,
-                content="Command cannot be empty.",
+                content="Command cannot be empty."
             )
 
         confirm = str(confirm).strip().upper()
-
         if confirm not in ("Y", "N"):
             return ToolResult(
                 success=False,
-                content="Invalid confirmation. Use Y or N.",
+                content="Invalid confirmation. Use Y or N."
             )
 
         if confirm != "Y":
@@ -109,24 +121,21 @@ class Shell(Tool):
         if not isinstance(timeout, int) or timeout <= 0:
             return ToolResult(
                 success=False,
-                content="Timeout must be a positive integer.",
+                content="Timeout must be a positive integer."
             )
 
         working_directory = None
-
         if cwd:
             working_directory = Path(cwd)
-
             if not working_directory.exists():
                 return ToolResult(
                     success=False,
-                    content=f"Working directory not found: {cwd}",
+                    content=f"Working directory not found: {cwd}"
                 )
-
             if not working_directory.is_dir():
                 return ToolResult(
                     success=False,
-                    content=f"Working directory is not a directory: {cwd}",
+                    content=f"Working directory is not a directory: {cwd}"
                 )
 
         start_time = time.perf_counter()
@@ -144,45 +153,40 @@ class Shell(Tool):
             )
 
             duration = time.perf_counter() - start_time
-
             stdout = process.stdout or ""
             stderr = process.stderr or ""
-
+            bounded_stdout, stdout_truncated = self._bounded_output(stdout)
+            bounded_stderr, stderr_truncated = self._bounded_output(stderr)
             success = process.returncode == 0
 
             output_parts = []
-
-            if stdout:
-                output_parts.append(
-                    f"STDOUT:\n{stdout.rstrip()}"
-                )
-
-            if stderr:
-                output_parts.append(
-                    f"STDERR:\n{stderr.rstrip()}"
-                )
-
+            if bounded_stdout:
+                output_parts.append(f"STDOUT:\n{bounded_stdout}")
+            if bounded_stderr:
+                output_parts.append(f"STDERR:\n{bounded_stderr}")
             if not output_parts:
-                output_parts.append(
-                    "Command completed with no output."
-                )
+                output_parts.append("Command completed with no output.")
 
-            output_parts.append(
-                f"Exit code: {process.returncode}"
-            )
+            output_parts.append(f"Exit code: {process.returncode}")
+            if stdout_truncated or stderr_truncated:
+                output_parts.append(
+                    "Output was truncated for agent context. "
+                    "Full stdout/stderr is available in tool metadata."
+                )
 
             return ToolResult(
                 success=success,
                 content="\n\n".join(output_parts),
                 metadata={
                     "command": command,
-                    "cwd": str(working_directory)
-                    if working_directory
-                    else None,
+                    "cwd": str(working_directory) if working_directory else None,
                     "timeout": timeout,
                     "exit_code": process.returncode,
                     "stdout": stdout,
                     "stderr": stderr,
+                    "stdout_truncated": stdout_truncated,
+                    "stderr_truncated": stderr_truncated,
+                    "output_limit_chars": self.MAX_OUTPUT_CHARS,
                     "duration": duration,
                     "executed": True,
                     "confirmed": True,
@@ -191,56 +195,49 @@ class Shell(Tool):
 
         except subprocess.TimeoutExpired as e:
             duration = time.perf_counter() - start_time
-
             stdout = e.stdout or ""
             stderr = e.stderr or ""
 
             if isinstance(stdout, bytes):
-                stdout = stdout.decode(
-                    "utf-8",
-                    errors="replace",
-                )
-
+                stdout = stdout.decode("utf-8", errors="replace")
             if isinstance(stderr, bytes):
-                stderr = stderr.decode(
-                    "utf-8",
-                    errors="replace",
-                )
+                stderr = stderr.decode("utf-8", errors="replace")
+
+            bounded_stdout, stdout_truncated = self._bounded_output(stdout)
+            bounded_stderr, stderr_truncated = self._bounded_output(stderr)
 
             return ToolResult(
                 success=False,
                 content=(
                     f"Command timed out after {timeout} seconds.\n\n"
-                    f"STDOUT:\n{stdout}\n\n"
-                    f"STDERR:\n{stderr}"
+                    f"STDOUT:\n{bounded_stdout}\n\n"
+                    f"STDERR:\n{bounded_stderr}"
                 ),
                 metadata={
                     "command": command,
-                    "cwd": str(working_directory)
-                    if working_directory
-                    else None,
+                    "cwd": str(working_directory) if working_directory else None,
                     "timeout": timeout,
                     "exit_code": None,
                     "stdout": stdout,
                     "stderr": stderr,
+                    "stdout_truncated": stdout_truncated,
+                    "stderr_truncated": stderr_truncated,
+                    "output_limit_chars": self.MAX_OUTPUT_CHARS,
                     "duration": duration,
                     "executed": True,
                     "confirmed": True,
-                    "timeout": True,
+                    "timed_out": True,
                 },
             )
 
         except FileNotFoundError as e:
             duration = time.perf_counter() - start_time
-
             return ToolResult(
                 success=False,
                 content=f"Command execution failed: {e}",
                 metadata={
                     "command": command,
-                    "cwd": str(working_directory)
-                    if working_directory
-                    else None,
+                    "cwd": str(working_directory) if working_directory else None,
                     "timeout": timeout,
                     "exit_code": None,
                     "duration": duration,
@@ -251,15 +248,12 @@ class Shell(Tool):
 
         except PermissionError:
             duration = time.perf_counter() - start_time
-
             return ToolResult(
                 success=False,
                 content="Permission denied while executing command.",
                 metadata={
                     "command": command,
-                    "cwd": str(working_directory)
-                    if working_directory
-                    else None,
+                    "cwd": str(working_directory) if working_directory else None,
                     "timeout": timeout,
                     "exit_code": None,
                     "duration": duration,
@@ -270,15 +264,12 @@ class Shell(Tool):
 
         except Exception as e:
             duration = time.perf_counter() - start_time
-
             return ToolResult(
                 success=False,
                 content=f"Shell execution error: {e}",
                 metadata={
                     "command": command,
-                    "cwd": str(working_directory)
-                    if working_directory
-                    else None,
+                    "cwd": str(working_directory) if working_directory else None,
                     "timeout": timeout,
                     "exit_code": None,
                     "duration": duration,
@@ -289,4 +280,3 @@ class Shell(Tool):
 
     def __repr__(self) -> str:
         return "<Tool name='Shell'>"
-
