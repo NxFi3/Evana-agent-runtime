@@ -20,7 +20,6 @@ class Agent:
         self.loop = Loop(self.config,self.Memory,self.CtxManager,self.Engine,self.TlManager)
         self.logger = get_logger("[AGENT]")
         self.steps = self.Memory.tick
-        self.loop.get_tool_definitions()
         self.workspace_root = 'EvanaAgent'
     def _create_event(
         self,

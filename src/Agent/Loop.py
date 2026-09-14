@@ -1,3 +1,5 @@
+#src/Agent/Loop.py
+
 from typing import Any
 import numpy as np
 from src.Tools.ToolManager import ToolManager
@@ -10,14 +12,7 @@ from src.Utils.logger import get_logger
 
 
 class Loop:
-    def __init__(
-        self,
-        config: dict[str, Any],
-        memory: MemoryManager,
-        ctx: ContextManager,
-        llm: LlmProvider,
-        tool: ToolManager
-    ) -> None:
+    def __init__(self, config: dict[str, Any], memory: MemoryManager, ctx: ContextManager, llm: LlmProvider, tool: ToolManager) -> None:
         self.config = config
         self.memory = memory
         self.ctx = ctx
@@ -26,18 +21,14 @@ class Loop:
         self.logger = get_logger("[LOOP]")
         self.tool_definitions = []
         self.state = None
+        self.failed_tool_calls = set()
 
     def get_tool_definitions(self):
-        self.tool_definitions = self.tool.get_tools()
+        if not self.tool_definitions:
+            self.tool_definitions = self.tool.get_tools()
         return self.tool_definitions
 
-    def _create_event(
-        self,
-        event_type: str,
-        content: str,
-        source: str,
-        metadata: dict[str, object] | None = None
-    ) -> MemoryEvent:
+    def _create_event(self, event_type: str, content: str, source: str, metadata: dict[str, object] | None = None) -> MemoryEvent:
         return MemoryEvent(
             event_type=event_type,
             content=content,
@@ -45,6 +36,12 @@ class Loop:
             step=self.memory.tick + 1,
             metadata=metadata or {}
         )
+
+    def _tool_signature(self, call):
+        function = call.get("function", {})
+        name = function.get("name", "")
+        arguments = function.get("arguments", {})
+        return name, str(arguments)
 
     def _execute_tools(self, tool_calls: list[Any]):
         execution = self.tool.execute(tool_calls)
@@ -87,6 +84,10 @@ class Loop:
             self.state.last_observation = content
 
             if not getattr(result, "success", True):
+                self.failed_tool_calls.add(
+                    self._tool_signature(call)
+                )
+
                 self.state.history["failures"].append({
                     "tool": tool_name,
                     "arguments": arguments,
@@ -112,6 +113,7 @@ class Loop:
         self.state.completion = False
         self.state.workspace_root = working_space
         self.ctx.set_workspace(self.state.workspace_root)
+        self.failed_tool_calls.clear()
 
         if not self.memory.step(user_input):
             self.logger.error("Failed to store user input in memory.")
@@ -141,7 +143,7 @@ class Loop:
             try:
                 results = self.llm.generate(
                     context,
-                    self.tool_definitions,
+                    self.get_tool_definitions(),
                     image
                 )
             except Exception as e:
@@ -178,13 +180,47 @@ class Loop:
                 self.state.progress = 1.0
                 return response
 
-            execution = self._execute_tools(tool_calls)
+            tool_calls_to_execute = []
+
+            for call in tool_calls:
+                signature = self._tool_signature(call)
+
+                if signature in self.failed_tool_calls:
+                    self.logger.warning(
+                        f"Skipping repeated failed tool call: {signature}"
+                    )
+
+                    self.memory.step(
+                        self._create_event(
+                            "tool_result",
+                            "This exact tool call already failed. Do not repeat it; change the arguments or choose another approach.",
+                            "tool",
+                            {
+                                "tool_call": call,
+                                "repeated_failed_call": True
+                            }
+                        )
+                    )
+                    continue
+
+                tool_calls_to_execute.append(call)
+
+            if not tool_calls_to_execute:
+                self.logger.warning(
+                    "All requested tool calls were previously failed."
+                )
+
+                self.state.phase = "failed"
+                return response
+
+            execution = self._execute_tools(tool_calls_to_execute)
 
             successful_tools = sum(
                 1
                 for result in execution.get("results", [])
                 if getattr(result, "success", True)
             )
+
             total_tools = len(execution.get("results", []))
 
             if total_tools:
