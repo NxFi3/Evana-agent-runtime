@@ -16,6 +16,13 @@ class ContextManager:
         self.context_builder = ContextBuilder(ContextWindow())
         self.compactor = Compactor(self.llm_provider)
         self.token_budget = TokenBudget(self.config, self.llm_provider)
+        context_config = self.config.get("context") or {}
+        self.compaction_target_tokens = int(
+            context_config.get(
+                "compaction_target_tokens",
+                min(16384, max(4096, int(self.token_budget.budget * 0.20)))
+            )
+        )
         self.compacted_trajectory: Optional[List[Message]] = None
         self.compacted_until_step = 0
 
@@ -28,13 +35,28 @@ class ContextManager:
             for event in events
         ]
 
+    def _message_to_compaction_text(self, message: Message) -> str:
+        role = message.get("role", "unknown")
+        content = message.get("content", "")
+        parts = [f"[{role}] {content}" if content else f"[{role}]"]
+
+        tool_name = message.get("tool_name")
+        if tool_name:
+            parts.append(f"tool_name={tool_name}")
+
+        tool_calls = message.get("tool_calls")
+        if tool_calls:
+            parts.append(f"tool_calls={tool_calls}")
+
+        return " ".join(parts)
+
     def _compact_trajectory(
         self,
         trajectory: List[Message],
         target_tokens: int
     ) -> List[Message]:
         text = "\n".join(
-            f"[{message.get('role', 'unknown')}] {message.get('content', '')}"
+            self._message_to_compaction_text(message)
             for message in trajectory
         )
 
@@ -43,19 +65,24 @@ class ContextManager:
             target_tokens
         )
 
+        if not compacted_text.strip():
+            logger.error("Context compactor returned an empty result; keeping existing trajectory.")
+            return trajectory
+
         return [{
             "role": "assistant",
-            "content": compacted_text
+            "content": "[COMPACTED AGENT STATE]\n" + compacted_text
         }]
+
     def set_workspace(self, root: str, state: str = ""):
         self.context_builder.set_workspace(root, state)
+
     def build_agent_context(
         self,
         PreviousResponse: Dict[str, Any],
         User_input: str = "",
         STM_Result: Optional[List[Any]] = None
     ) -> List[Message]:
-
         events = STM_Result or []
 
         current_step = (
@@ -69,7 +96,6 @@ class ContextManager:
                 User_input,
                 events
             )
-
         else:
             new_events = [
                 event
@@ -89,40 +115,31 @@ class ContextManager:
                 User_input,
                 []
             )
-
-            self.context_builder.context_window.set_trajectory(
-                trajectory
-            )
-
+            self.context_builder.context_window.set_trajectory(trajectory)
 
         if not self.check_context_length(PreviousResponse):
-            remaining_tokens = self.token_budget.remaining_budget(
-                PreviousResponse
-            )
-
+            used_tokens = self.token_budget.used_tokens(PreviousResponse)
             logger.warning(
                 f"Context budget exceeded at step {current_step}. "
-                f"Remaining tokens: {remaining_tokens}. "
-                f"Starting compaction."
+                f"Used tokens: {used_tokens}. "
+                f"Budget: {self.token_budget.budget}. "
+                f"Starting compaction to ~{self.compaction_target_tokens} tokens."
             )
-
-            target_tokens = max(100, remaining_tokens)
 
             trajectory = self.context_builder.context_window.trajectory
-
-            self.compacted_trajectory = self._compact_trajectory(
+            compacted = self._compact_trajectory(
                 trajectory,
-                target_tokens
+                self.compaction_target_tokens
             )
 
-            self.compacted_until_step = current_step
-
-            self.context_builder.context_window.set_trajectory(
-                self.compacted_trajectory
-            )
-
-            logger.info(
-                f"Context compacted successfully at step {current_step}."
-            )
+            if compacted != trajectory:
+                self.compacted_trajectory = compacted
+                self.compacted_until_step = current_step
+                self.context_builder.context_window.set_trajectory(compacted)
+                logger.info(
+                    f"Context compacted successfully at step {current_step}."
+                )
+            else:
+                logger.warning("Context compaction was not applied.")
 
         return self.context_builder.context_window.prompt()
