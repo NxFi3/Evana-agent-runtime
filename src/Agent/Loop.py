@@ -13,14 +13,15 @@ from src.Utils.logger import get_logger
 from src.Engine.LlmProviderManager import LlmProvider
 from src.Engine.providers.LLMResult import LLMResult
 
+
 class Loop:
     def __init__(
-    self,
-    config: dict,
-    memory: MemoryManager,
-    context: ContextManager,
-    llm: LlmProvider,
-    tools: ToolManager,
+        self,
+        config: dict,
+        memory: MemoryManager,
+        context: ContextManager,
+        llm: LlmProvider,
+        tools: ToolManager,
     ):
         self.config = config
         self.memory = memory
@@ -32,7 +33,10 @@ class Loop:
 
         self.state: AgentState | None = None
         self.tool_definitions: list[dict] | None = None
-        self.failed_tool_calls: set[tuple[str, str]] = set()
+
+        # Track failures instead of permanently blacklisting calls.
+        self.tool_failure_counts: dict[tuple[str, str], int] = {}
+        self.max_same_tool_failures = 3
 
         self.completion_evaluator = CompletionEvaluator(
             self.llm
@@ -309,11 +313,27 @@ class Loop:
                 )
             )
 
-            action = (
-                f"{tool_name}({arguments})"
+            # Keep action history compact.
+            action = str(
+                tool_name
+            ).strip()
+
+            self.state.last_action = (
+                f"Executed {action}"
             )
 
-            self.state.last_action = action
+            # Do not store full tool arguments in memory.
+            # This prevents large EditFile old_content/new_content
+            # payloads from polluting the long-term context.
+            argument_keys = []
+
+            if isinstance(
+                arguments,
+                dict,
+            ):
+                argument_keys = list(
+                    arguments.keys()
+                )
 
             self.memory.step(
                 self._create_event(
@@ -321,9 +341,8 @@ class Loop:
                     content=action,
                     source="llm",
                     metadata={
-                        "tool_call": call,
                         "tool_name": tool_name,
-                        "arguments": arguments,
+                        "argument_keys": argument_keys,
                     },
                 )
             )
@@ -338,17 +357,15 @@ class Loop:
                 content or ""
             )
 
-            metadata = getattr(
+            result_metadata = getattr(
                 result,
                 "metadata",
                 {},
             ) or {}
 
             metadata = {
-                **metadata,
-                "tool_call": call,
+                **result_metadata,
                 "tool_name": tool_name,
-                "arguments": arguments,
             }
 
             success = getattr(
@@ -384,14 +401,30 @@ class Loop:
                     )
                 )
 
-                self.failed_tool_calls.add(
-                    signature
+                failure_count = (
+                    self.tool_failure_counts.get(
+                        signature,
+                        0,
+                    )
+                    + 1
                 )
+
+                self.tool_failure_counts[
+                    signature
+                ] = failure_count
 
                 self.logger.warning(
                     f"Tool failed: "
-                    f"{tool_name}({arguments})"
+                    f"{tool_name}({arguments}) "
+                    f"| failure="
+                    f"{failure_count}/"
+                    f"{self.max_same_tool_failures}"
                 )
+
+                metadata = {
+                    **metadata,
+                    "failure_count": failure_count,
+                }
 
             self.memory.step(
                 self._create_event(
@@ -437,7 +470,7 @@ class Loop:
         self.state.iteration = 0
         self.state.completion = False
 
-        self.failed_tool_calls.clear()
+        self.tool_failure_counts.clear()
 
         self._refresh_workspace_files()
 
@@ -629,7 +662,8 @@ class Loop:
                 continue
 
             # -------------------------------------------------
-            # Filter previously failed exact tool calls.
+            # Prevent infinite repetition of the same failed
+            # tool call while still allowing recovery.
             # -------------------------------------------------
 
             executable_calls = []
@@ -642,26 +676,45 @@ class Loop:
                     )
                 )
 
-                if signature in self.failed_tool_calls:
+                failure_count = (
+                    self.tool_failure_counts.get(
+                        signature,
+                        0,
+                    )
+                )
+
+                if (
+                    failure_count
+                    >= self.max_same_tool_failures
+                ):
+
+                    tool_name, _ = (
+                        self._get_tool_call_data(
+                            call
+                        )
+                    )
 
                     self.logger.warning(
-                        "Skipping repeated failed "
-                        "tool call: "
-                        + str(signature)
+                        "Blocking repeatedly failed "
+                        f"tool call: "
+                        f"{tool_name}"
                     )
 
                     self.memory.step(
                         self._create_event(
                             event_type="tool_result",
                             content=(
-                                "This exact tool call already failed. "
-                                "Do not repeat it; change the arguments "
-                                "or choose another approach."
+                                "This exact tool call has "
+                                f"failed {failure_count} times. "
+                                "Do not repeat it. "
+                                "Change the arguments or "
+                                "use a different approach."
                             ),
-                            source="tool",
+                            source="system",
                             metadata={
-                                "tool_call": call,
+                                "tool_name": tool_name,
                                 "repeated_failed_call": True,
+                                "failure_count": failure_count,
                             },
                         )
                     )
@@ -675,14 +728,26 @@ class Loop:
             if not executable_calls:
 
                 self.logger.warning(
-                    "All requested tool calls were "
-                    "previously failed."
+                    "All requested tool calls are "
+                    "currently blocked."
                 )
 
-                self.state.phase = "failed"
-                self.state.completion = False
+                self.memory.step(
+                    self._create_event(
+                        event_type="tool_result",
+                        content=(
+                            "The requested tool calls have "
+                            "failed repeatedly. "
+                            "You must change your approach."
+                        ),
+                        source="system",
+                        metadata={
+                            "recovery_required": True,
+                        },
+                    )
+                )
 
-                return final_response
+                continue
 
             try:
 
@@ -710,4 +775,3 @@ class Loop:
         )
 
         return final_response
-
