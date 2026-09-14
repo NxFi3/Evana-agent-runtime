@@ -1,41 +1,75 @@
 # src/Agent/Loop.py
 
 from typing import Any
+import os
 import numpy as np
-from src.Tools.ToolManager import ToolManager
-from src.Memory.MemoryManager import MemoryManager
-from src.Context.ContextManager import ContextManager
-from Engine.LlmProviderManager import LlmProvider
-from Engine.providers.LLMResult import LLMResult
-from src.Memory.MemoryEvent import MemoryEvent
+
 from src.Agent.AgentState import AgentState
+from src.Context.ContextManager import ContextManager
+from src.Memory.MemoryEvent import MemoryEvent
+from src.Memory.MemoryManager import MemoryManager
+from src.Tools.ToolManager import ToolManager
 from src.Utils.logger import get_logger
 
+from src.Engine.LlmProviderManager import LlmProvider
+from src.Engine.providers.LLMResult import LLMResult
 
+
+
+
+total_time_wasted_here = 12
 class Loop:
+
     def __init__(
         self,
-        config: dict[str, Any],
+        config: dict,
         memory: MemoryManager,
-        ctx: ContextManager,
+        context: ContextManager,
         llm: LlmProvider,
-        tool: ToolManager
-    ) -> None:
+        tools: ToolManager,
+    ):
         self.config = config
+
         self.memory = memory
-        self.ctx = ctx
+        self.context = context
         self.llm = llm
-        self.tool = tool
+        self.tools = tools
 
         self.logger = get_logger("[LOOP]")
 
-        self.tool_definitions = []
-        self.state = None
-        self.failed_tool_calls = set()
+        self.state: AgentState | None = None
 
-    def get_tool_definitions(self):
-        if not self.tool_definitions:
-            self.tool_definitions = self.tool.get_tools()
+        self.tool_definitions: list[dict] | None = None
+
+        self.failed_tool_calls: set[tuple[str, str]] = set()
+
+        context_config = self.config.get("context") or {}
+
+        self.tool_result_max_chars = int(
+            context_config.get(
+                "tool_result_max_chars",
+                6000,
+            )
+        )
+
+        self.tool_result_preview_head = int(
+            context_config.get(
+                "tool_result_preview_head",
+                4500,
+            )
+        )
+
+        self.tool_result_preview_tail = int(
+            context_config.get(
+                "tool_result_preview_tail",
+                1000,
+            )
+        )
+
+    def _get_tool_definitions(self) -> list[dict]:
+
+        if self.tool_definitions is None:
+            self.tool_definitions = self.tools.get_tools()
 
         return self.tool_definitions
 
@@ -44,143 +78,338 @@ class Loop:
         event_type: str,
         content: str,
         source: str,
-        metadata: dict[str, object] | None = None
+        metadata: dict | None = None,
     ) -> MemoryEvent:
+
         return MemoryEvent(
             event_type=event_type,
             content=content,
             source=source,
             step=self.memory.tick + 1,
-            metadata=metadata or {}
+            metadata=metadata or {},
         )
 
-    def _get_tool_call_data(self, call):
-        if hasattr(call, "function"):
-            function = call.function
+    def _get_tool_call_data(
+        self,
+        tool_call: Any,
+    ) -> tuple[str, Any]:
 
-            name = getattr(function, "name", "")
-            arguments = getattr(function, "arguments", {})
+        if hasattr(tool_call, "function"):
+
+            function = tool_call.function
+
+            name = getattr(
+                function,
+                "name",
+                "",
+            )
+
+            arguments = getattr(
+                function,
+                "arguments",
+                {},
+            )
 
             return name, arguments
 
-        if isinstance(call, dict):
-            function = call.get("function", {})
+        if isinstance(tool_call, dict):
+
+            function = tool_call.get(
+                "function",
+                {},
+            )
 
             if not isinstance(function, dict):
                 return "", {}
 
-            name = function.get("name", "")
-            arguments = function.get("arguments", {})
+            name = function.get(
+                "name",
+                "",
+            )
+
+            arguments = function.get(
+                "arguments",
+                {},
+            )
 
             return name, arguments
 
         return "", {}
 
-    def _tool_signature(self, call):
-        name, arguments = self._get_tool_call_data(call)
+    def _tool_signature(
+        self,
+        tool_call: Any,
+    ) -> tuple[str, str]:
 
-        return name, str(arguments)
+        name, arguments = self._get_tool_call_data(
+            tool_call
+        )
 
-    def _execute_tools(self, tool_calls: list[Any]):
-        execution = self.tool.execute(tool_calls)
+        return (
+            name,
+            str(arguments),
+        )
 
-        calls = execution.get("calls", [])
-        results = execution.get("results", [])
+    def _preview_tool_result(
+        self,
+        content: str,
+    ) -> str:
 
-        for call, result in zip(calls, results):
+        content = str(
+            content or ""
+        )
 
-            tool_name, arguments = self._get_tool_call_data(call)
+        max_chars = max(
+            1,
+            self.tool_result_max_chars,
+        )
 
-            self.state.last_action = (
+        if len(content) <= max_chars:
+            return content
+
+        head = min(
+            self.tool_result_preview_head,
+            len(content),
+        )
+
+        tail = min(
+            self.tool_result_preview_tail,
+            len(content) - head,
+        )
+
+        if head + tail >= len(content):
+            return content
+
+        omitted = (
+            len(content)
+            - head
+            - tail
+        )
+
+        return (
+            content[:head]
+            + "\n\n"
+            + f"... [{omitted} characters truncated] ...\n\n"
+            + content[-tail:]
+        )
+
+    def _refresh_workspace_files(self):
+
+        if self.state is None:
+            return
+
+        root = (
+            self.state.workspace_root
+        )
+
+        if not root:
+            self.state.workspace_files = []
+            return
+
+        if not os.path.isdir(root):
+
+            self.logger.warning(
+                f"Workspace directory does not exist: {root}"
+            )
+
+            self.state.workspace_files = []
+            return
+
+        files: list[str] = []
+
+        try:
+
+            for current_root, dirs, filenames in os.walk(root):
+                dirs[:] = [
+                    directory
+                    for directory in dirs
+                    if directory not in {
+                        ".git",
+                        "__pycache__",
+                        ".pytest_cache",
+                        ".mypy_cache",
+                        ".ruff_cache",
+                        "node_modules",
+                    }
+                ]
+
+                for filename in filenames:
+
+                    full_path = os.path.join(
+                        current_root,
+                        filename,
+                    )
+
+                    relative_path = os.path.relpath(
+                        full_path,
+                        root,
+                    )
+
+                    files.append(
+                        relative_path.replace(
+                            os.sep,
+                            "/",
+                        )
+                    )
+
+            files.sort()
+
+            self.state.workspace_files = files
+
+        except Exception as e:
+
+            self.logger.warning(
+                f"Failed to refresh workspace files: {e}"
+            )
+    def _execute_tools(
+        self,
+        tool_calls: list[Any],
+    ) -> dict:
+
+        execution = self.tools.execute(
+            tool_calls
+        )
+
+        calls = execution.get(
+            "calls",
+            []
+        )
+
+        results = execution.get(
+            "results",
+            []
+        )
+
+        for call, result in zip(
+            calls,
+            results,
+        ):
+
+            tool_name, arguments = (
+                self._get_tool_call_data(call)
+            )
+
+            action = (
                 f"{tool_name}({arguments})"
             )
 
-            self.state.history["tool_calls"].append({
-                "tool": tool_name,
-                "arguments": arguments
-            })
+            self.state.last_action = action
 
             self.memory.step(
                 self._create_event(
-                    "tool_call",
-                    f"{tool_name}({arguments})",
-                    "llm",
-                    {
+                    event_type="tool_call",
+                    content=action,
+                    source="llm",
+                    metadata={
                         "tool_call": call,
                         "tool_name": tool_name,
-                        "arguments": arguments
-                    }
+                        "arguments": arguments,
+                    },
                 )
             )
 
             content = getattr(
                 result,
                 "content",
-                str(result)
+                str(result),
+            )
+
+            content = str(
+                content or ""
             )
 
             metadata = getattr(
                 result,
                 "metadata",
-                {}
+                {},
             ) or {}
 
             metadata = {
                 **metadata,
                 "tool_call": call,
                 "tool_name": tool_name,
-                "arguments": arguments
+                "arguments": arguments,
             }
 
-            self.state.last_observation = content
+            success = getattr(
+                result,
+                "success",
+                True,
+            )
 
-            if not getattr(result, "success", True):
+            preview = self._preview_tool_result(
+                content
+            )
 
-                self.failed_tool_calls.add(
-                    self._tool_signature(call)
-                )
+            if preview != content:
 
-                self.state.history["failures"].append({
-                    "tool": tool_name,
-                    "arguments": arguments,
-                    "result": content
-                })
+                metadata = {
+                    **metadata,
+                    "truncated": True,
+                    "original_length": len(content),
+                    "stored_length": len(preview)}
+
+            self.state.last_observation = preview
+            if not success:
+                self.failed_tool_calls.add(self._tool_signature(call))
+                self.logger.warning(
+                    f"Tool failed: "
+                    f"{tool_name}({arguments})")
 
             self.memory.step(
                 self._create_event(
-                    "tool_result",
-                    content,
-                    "tool",
-                    metadata
-                )
-            )
+                    event_type="tool_result",
+                    content=preview,
+                    source="tool",
+                    metadata=metadata))
+
+        self._refresh_workspace_files()
 
         return execution
 
-    def Process(
+    def _build_context(
+        self,
+        user_input: str,
+        previous_response: LLMResult | None,
+    ):
+
+        self._refresh_workspace_files()
+
+        return self.context.build_agent_context(
+            previous_response=previous_response,
+            user_input=user_input,
+            stm_result=self.memory.get_previous_events(100),
+            agent_state=self.state,
+        )
+
+    def run(
         self,
         user_input: MemoryEvent,
         working_space: str,
-        image: np.ndarray = None
-    ):
+        image: np.ndarray | None = None,
+    ) -> str:
 
         self.state = AgentState(
-            task=user_input.content
+            task=user_input.content,
+            workspace_root=working_space,
         )
 
         self.state.phase = "executing"
         self.state.iteration = 0
-        self.state.progress = 0.0
         self.state.completion = False
-        self.state.workspace_root = working_space
-
-        self.ctx.set_workspace(
-            self.state.workspace_root
-        )
 
         self.failed_tool_calls.clear()
 
-        if not self.memory.step(user_input):
+        self._refresh_workspace_files()
+
+        self.context.set_workspace(
+            working_space
+        )
+
+        if not self.memory.step(
+            user_input
+        ):
+
             self.logger.error(
                 "Failed to store user input in memory."
             )
@@ -189,27 +418,22 @@ class Loop:
 
             return ""
 
-        context = self.ctx.build_agent_context(
-            PreviousResponse={},
-            User_input=user_input.content,
-            STM_Result=self.memory.get_previous_events(100)
-        )
+        previous_response: LLMResult | None = None
+        final_response = ""
 
         max_iterations = max(
             1,
             int(
                 self.config.get(
                     "max_agent_iterations",
-                    20
+                    20,
                 )
-            )
+            ),
         )
-
-        response = ""
 
         for iteration in range(
             1,
-            max_iterations + 1
+            max_iterations + 1,
         ):
 
             self.state.iteration = iteration
@@ -219,12 +443,19 @@ class Loop:
                 f"{iteration}/{max_iterations}"
             )
 
+            context = self._build_context(
+                user_input=user_input.content,
+                previous_response=previous_response,
+            )
+
             try:
 
-                results: LLMResult = self.llm.generate(
-                    context,
-                    self.get_tool_definitions(),
-                    image
+                result: LLMResult = (
+                    self.llm.generate(
+                        context,
+                        self._get_tool_definitions(),
+                        image,
+                    )
                 )
 
             except Exception as e:
@@ -235,137 +466,122 @@ class Loop:
 
                 self.state.phase = "failed"
 
-                return response
+                return final_response
 
-            if not isinstance(results, LLMResult):
+            if not isinstance(
+                result,
+                LLMResult,
+            ):
 
                 self.logger.error(
-                    "LLM provider returned an invalid result."
+                    "LLM provider returned "
+                    "an invalid result."
                 )
 
                 self.state.phase = "failed"
 
-                return response
+                return final_response
 
-            response = results.response
-            tool_calls = results.tool_calls or []
+            previous_response = result
+
+            final_response = (
+                result.response or ""
+            )
+
+            tool_calls = (
+                result.tool_calls or []
+            )
 
             self.logger.info(
                 f"LLM response received | "
                 f"tool_calls={len(tool_calls)}"
             )
-
             if not tool_calls:
 
-                if response:
+                if final_response:
+
+                    self.state.last_action = (
+                        final_response
+                    )
 
                     self.memory.step(
                         self._create_event(
-                            "agent_action",
-                            response,
-                            "llm",
-                            {
-                                "thinking": results.thinking
-                            }
+                            event_type="agent_action",
+                            content=final_response,
+                            source="llm",
+                            metadata={
+                                "thinking": result.thinking,
+                            },
                         )
                     )
 
-                self.state.phase = "not_completed"
+                self.state.phase = "completed"
                 self.state.completion = True
-                self.state.progress = 1.0
 
-                return response
-
-            tool_calls_to_execute = []
+                return final_response
+            executable_calls = []
 
             for call in tool_calls:
 
-                signature = self._tool_signature(
-                    call
+                signature = (
+                    self._tool_signature(call)
                 )
 
                 if signature in self.failed_tool_calls:
 
                     self.logger.warning(
-                        f"Skipping repeated failed "
-                        f"tool call: {signature}"
+                        "Skipping repeated "
+                        f"failed tool call: {signature}"
                     )
 
                     self.memory.step(
                         self._create_event(
-                            "tool_result",
-                            (
-                                "This exact tool call already "
-                                "failed. Do not repeat it; "
-                                "change the arguments or "
-                                "choose another approach."
+                            event_type="tool_result",
+                            content=(
+                                "This exact tool call "
+                                "already failed. "
+                                "Do not repeat it; "
+                                "change the arguments "
+                                "or choose another approach."
                             ),
-                            "tool",
-                            {
+                            source="tool",
+                            metadata={
                                 "tool_call": call,
-                                "repeated_failed_call": True
-                            }
+                                "repeated_failed_call": True,
+                            },
                         )
                     )
 
                     continue
 
-                tool_calls_to_execute.append(
+                executable_calls.append(
                     call
                 )
 
-            if not tool_calls_to_execute:
+
+            if not executable_calls:
 
                 self.logger.warning(
-                    "All requested tool calls were "
-                    "previously failed."
+                    "All requested tool calls "
+                    "were previously failed."
                 )
 
                 self.state.phase = "failed"
+                self.state.completion = False
 
-                return response
+                return final_response
 
-            execution = self._execute_tools(
-                tool_calls_to_execute
-            )
+            try:
 
-            successful_tools = sum(
-                1
-                for result in execution.get(
-                    "results",
-                    []
-                )
-                if getattr(
-                    result,
-                    "success",
-                    True
-                )
-            )
-
-            total_tools = len(
-                execution.get(
-                    "results",
-                    []
-                )
-            )
-
-            if total_tools:
-
-                self.state.progress = min(
-                    0.99,
-                    self.state.progress
-                    + (
-                        successful_tools
-                        / total_tools
-                    ) * 0.05
+                self._execute_tools(
+                    executable_calls
                 )
 
-            context = self.ctx.build_agent_context(
-                PreviousResponse=results,
-                User_input=user_input.content,
-                STM_Result=self.memory.get_previous_events(100)
-            )
+            except Exception as e:
 
+                self.logger.error(f"Tool execution failed: {e}")
+                self.state.phase = "failed"
+                return final_response
         self.state.phase = "max_iterations"
         self.state.completion = False
 
@@ -374,4 +590,4 @@ class Loop:
             f"{max_iterations}"
         )
 
-        return response
+        return final_response

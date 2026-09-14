@@ -13,9 +13,4 @@ class AgentState:
     last_observation: Any = None
     workspace_root: str = ""
     workspace_files: list[str] = field(default_factory=list)
-    history: dict = field(default_factory=lambda: {
-        "tool_calls": [],
-        "failures": []
-    })
-    progress: float = 0.0
     completion: bool = False

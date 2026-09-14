@@ -30,14 +30,8 @@ class OllamaProvider(ProviderBase):
             )
         except Exception as e:
             logger.error(f"Chat error: {e}")
-            return LLMResult(
-                response="",
-                message={},
-                tool_calls=[],
-                thinking=None,
-                usage=0,
-                raw=None,
-            )
+            raise
+           
 
         message = chat_response.message
         prompt_tokens = getattr(chat_response, "prompt_eval_count", 0) or 0

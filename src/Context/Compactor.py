@@ -1,7 +1,7 @@
 #src/Context/Compactor.py
 
 from src.Utils.logger import get_logger
-from Engine.LlmProviderManager import LlmProvider
+from src.Engine.LlmProviderManager import LlmProvider
 from src.Context.CompactorPrompt import BuildCompactorPrompt
 
 

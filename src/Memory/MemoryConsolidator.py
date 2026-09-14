@@ -3,7 +3,7 @@
 from typing import List
 from src.Utils.logger import get_logger
 from src.Memory.Retrieval import Retrieval
-from Engine.LlmProviderManager import LlmProvider
+from src.Engine.LlmProviderManager import LlmProvider
 from src.Memory.DatabaseManager import DBManager
 from src.Memory.MemoryEvent import MemoryEvent
 from src.Memory.MemoryPrompt import build_decision_prompt
@@ -162,8 +162,8 @@ class MemoryConsolidator:
 
         response = self.llmprovider.generate(
             [{'role':'system','content':prompt}]
-        ).get('response', '')
-
+        )
+        response = response.response
         return self.parser.parse(
             response
         )

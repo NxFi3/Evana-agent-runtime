@@ -1,16 +1,17 @@
-from typing import Any, Dict, List, Optional
+#src/Context/ContextManager.py
 
+from typing import Any, Dict, List, Optional
 from src.Utils.logger import get_logger
 from src.Context.ContextBuilder import ContextBuilder
 from src.Context.ContextWindow import ContextWindow, Message
 from src.Context.Compactor import Compactor
 from src.Context.TokenBudget import TokenBudget
-from Engine.LlmProviderManager import LlmProvider
-from Engine.providers.LLMResult import LLMResult
+from src.Engine.LlmProviderManager import LlmProvider
+from src.Engine.providers.LLMResult import LLMResult
+from src.Agent.AgentState import AgentState
 
 
 logger = get_logger("[CONTEXTMANAGER]")
-
 
 class ContextManager:
     def __init__(
@@ -50,11 +51,13 @@ class ContextManager:
             )
         )
 
+
         self.compacted_trajectory: Optional[
             List[Message]
         ] = None
 
         self.compacted_until_step = 0
+
 
     def check_context_length(
         self,
@@ -76,22 +79,17 @@ class ContextManager:
         return [
             self.context_builder._event_to_message(event)
             for event in events
+            if event.event_type.lower() != "user_input"
         ]
+
 
     def _message_to_compaction_text(
         self,
         message: Message
     ) -> str:
 
-        role = message.get(
-            "role",
-            "unknown"
-        )
-
-        content = message.get(
-            "content",
-            ""
-        )
+        role = message.get("role", "unknown")
+        content = message.get("content", "")
 
         parts = [
             f"[{role}] {content}"
@@ -99,18 +97,14 @@ class ContextManager:
             else f"[{role}]"
         ]
 
-        tool_name = message.get(
-            "tool_name"
-        )
+        tool_name = message.get("tool_name")
 
         if tool_name:
             parts.append(
                 f"tool_name={tool_name}"
             )
 
-        tool_calls = message.get(
-            "tool_calls"
-        )
+        tool_calls = message.get("tool_calls")
 
         if tool_calls:
             parts.append(
@@ -124,6 +118,9 @@ class ContextManager:
         trajectory: List[Message],
         target_tokens: int
     ) -> List[Message]:
+
+        if not trajectory:
+            return trajectory
 
         text = "\n".join(
             self._message_to_compaction_text(message)
@@ -148,12 +145,11 @@ class ContextManager:
             {
                 "role": "assistant",
                 "content": (
-                    "[COMPACTED AGENT STATE]\n"
+                    "[COMPACTED HISTORY]\n"
                     + compacted_text
                 )
             }
         ]
-
     def set_workspace(
         self,
         root: str,
@@ -164,32 +160,34 @@ class ContextManager:
             root,
             state
         )
-
     def build_agent_context(
         self,
-        PreviousResponse: Optional[LLMResult],
-        User_input: str = "",
-        STM_Result: Optional[List[Any]] = None
+        previous_response: Optional[LLMResult],
+        user_input: str = "",
+        stm_result: Optional[List[Any]] = None,
+        agent_state: Optional[AgentState] = None
     ) -> List[Message]:
 
-        events = STM_Result or []
+        events = stm_result or []
 
         current_step = (
             events[-1].step
             if events
             else self.compacted_until_step
         )
-
         if self.compacted_trajectory is None:
 
-            self.context_builder.build_context(
-                User_input,
-                events
-            )
+            recent_events = [
+                event
+                for event in events
+                if event.event_type.lower() != "user_input"
+            ]
+
+            compacted_history = []
 
         else:
 
-            new_events = [
+            recent_events = [
                 event
                 for event in events
                 if (
@@ -199,33 +197,30 @@ class ContextManager:
                 )
             ]
 
-            trajectory = list(
+            compacted_history = list(
                 self.compacted_trajectory
             )
 
-            trajectory.extend(
-                self._build_trajectory(
-                    new_events
-                )
-            )
+        recent_trajectory = self._build_trajectory(
+            recent_events
+        )
 
-            self.context_builder.build_context(
-                User_input,
-                []
-            )
+        self.context_builder.build_context(
+            user_input=user_input,
+            stm_result=recent_trajectory,
+            agent_state=agent_state,
+            compacted_history=compacted_history
+        )
 
-            self.context_builder.context_window.set_trajectory(
-                trajectory
-            )
         if not self.check_context_length(
-            PreviousResponse
+            previous_response
         ):
 
             used_tokens = (
                 self.token_budget.used_tokens(
-                    PreviousResponse
+                    previous_response
                 )
-                if PreviousResponse is not None
+                if previous_response is not None
                 else 0
             )
 
@@ -238,29 +233,29 @@ class ContextManager:
                 f"{self.compaction_target_tokens} tokens."
             )
 
-            trajectory = (
-                self.context_builder
-                .context_window
-                .trajectory
+            trajectory_to_compact = (
+                compacted_history
+                + recent_trajectory
             )
 
             compacted = self._compact_trajectory(
-                trajectory,
+                trajectory_to_compact,
                 self.compaction_target_tokens
             )
 
-            if compacted != trajectory:
+            if compacted != trajectory_to_compact:
 
-                self.compacted_trajectory = (
-                    compacted
-                )
+                self.compacted_trajectory = compacted
 
                 self.compacted_until_step = (
                     current_step
                 )
 
-                self.context_builder.context_window.set_trajectory(
-                    compacted
+                self.context_builder.build_context(
+                    user_input=user_input,
+                    stm_result=[],
+                    agent_state=agent_state,
+                    compacted_history=compacted
                 )
 
                 logger.info(

@@ -3,19 +3,38 @@
     "provider": "ollama",
     "provider_config": {
       "model_name": "gpt-oss:20b",
-      "llm-options": {}
+      "generation_config": {
+        "temperature": 0.3,
+        "num_ctx": 120000,
+        "num_predict": -1
+      }
     }
   },
 
-  "memory": {},
-
   "context": {
-    "safe_margin": 16384
+    "safe_margin": 16384,
+    "compaction_target_tokens": 16384
   },
 
-  "retrieval": {},
+  "memory": {
+    "memorycachepath": "data/MemoryTemporalCache.pkl",
+    "queuecache": "data/queuecache.pkl",
+    "db_path": "data/ltm_database.db",
+    "index_path": "data/vectors.faiss"
+  },
 
-  "models": {},
+  "retrieval": {
+    "top_k": 10
+  },
+
+  "models": {
+    "embedding": {
+      "model_name": "intfloat/multilingual-e5-base"
+    },
+    "reranker": {
+      "model_name": "BAAI/bge-reranker-v2-m3"
+    }
+  },
 
   "max_agent_iterations": 100
 }

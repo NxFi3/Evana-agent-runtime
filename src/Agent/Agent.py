@@ -6,7 +6,7 @@ from src.Agent.Loop import Loop
 from src.Context.ContextManager import ContextManager
 from src.Memory.MemoryManager import MemoryManager
 from src.Memory.MemoryEvent import MemoryEvent
-from Engine.LlmProviderManager import LlmProvider
+from src.Engine.LlmProviderManager import LlmProvider
 from src.Tools.ToolManager import ToolManager
 from src.Utils.logger import get_logger
 
@@ -38,7 +38,7 @@ class Agent:
         )
 
     def act(self,user_input: MemoryEvent,image: np.ndarray = None):
-        response = self.loop.Process(user_input,self.workspace_root,image)
+        response = self.loop.run(user_input,self.workspace_root,image)
         return response
 
     def set_workspace(self, path: str):
