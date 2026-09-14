@@ -1,85 +1,82 @@
-#src/Context/CompactorPrompt.py
+def BuildCompactorPrompt(
+    context: str,
+    max_length: int
+) -> str:
 
-def BuildCompactorPrompt(context: str,max_length:int) -> str:
     prompt = f"""
-You are the Context Compactor of an AI Agent Runtime.
+You are compressing the working context of an autonomous software engineering agent.
 
-Your task is to compress the provided old agent context into a concise, self-contained context that allows the agent to continue the current task correctly.
+Create a minimal, self-contained working-state representation.
 
-You are NOT writing a general conversation summary.
+Preserve only information that can affect future actions or prevent repeated work.
 
-You are creating a compact representation of the agent's current working state.
+KEEP:
 
-Preserve information that is necessary for continuing the task.
+- User task and explicit requirements
+- Important constraints
+- Decisions already made
+- Current implementation state
+- Important discoveries and technical facts
+- Files created, modified, deleted, or meaningfully inspected
+- Important code changes
+- Important successful and failed tool results
+- Errors and known causes
+- Unresolved problems
+- Important paths, identifiers, commands, values, and names
+- Completed work
+- Pending work
+- Facts required to avoid repeating failed approaches
 
-Preserve:
+REMOVE:
 
-* The user's task and requirements
-* Important constraints and conditions
-* Important decisions that have already been made
-* Important discoveries and findings
-* Current progress
-* Completed actions
-* Pending actions
-* Important tool results
-* Files that were inspected, created, modified, or deleted
-* Important code changes
-* Relevant errors and their causes when known
-* Unresolved problems
-* Important technical facts, values, identifiers, names, and paths
-* Information that would prevent the agent from unnecessarily repeating previous work
-* Relevant next steps when they are explicitly supported by the context
+- Greetings and filler
+- Repeated statements
+- Duplicate tool results
+- Raw stdout/stderr when the conclusion is enough
+- Repeated commands
+- Full file contents when their important conclusions are known
+- Old reasoning that no longer affects future actions
+- Redundant explanations
+- Stale information superseded by newer information
 
-Remove or compress:
+RULES:
 
-* Repeated information
-* Duplicate tool results
-* Trivial conversation
-* Greetings and small talk
-* Verbose explanations
-* Intermediate information that no longer affects the task
-* Redundant file contents when their important conclusions are already known
-* Repeated errors
-* Actions whose results are no longer relevant
+- Never invent facts.
+- Never infer unsupported facts.
+- Never change the meaning of facts.
+- Never claim success without evidence.
+- Preserve exact paths and identifiers when important.
+- Preserve unresolved failures.
+- Prefer current state over history.
+- Prefer conclusions over raw logs.
+- Prefer compact factual statements over prose.
+- Do not mention compaction.
+- Do not explain what was removed.
+- Do not use JSON.
+- Do not use Markdown code fences.
+- Output only the working state.
 
-Rules:
-
-* Do not invent information.
-* Do not infer facts that are not supported by the provided context.
-* Do not change the meaning of existing information.
-* Do not hide unresolved problems.
-* Clearly distinguish completed, failed, and pending actions.
-* Preserve important file paths exactly.
-* Preserve important identifiers, names, values, commands, and technical details exactly.
-* Do not claim that an action succeeded unless the context explicitly indicates success.
-* Do not remove a decision merely because it appears old if it can affect future actions.
-* Prefer concrete facts and current state over conversational wording.
-* The compacted context must be understandable without access to the removed context.
-* Do not mention the compaction process.
-* Do not explain what information was removed.
-* Do not add commentary before or after the compacted context.
-* Do not use JSON.
-* Do not use Markdown code fences.
-
-Structure the output using concise sections when they are relevant:
+Use only relevant sections:
 
 Task:
 Requirements:
-Progress:
-Decisions:
+Completed:
+Current State:
 Important Findings:
 Changes:
 Errors:
 Unresolved:
 Next Steps:
 
-You may omit sections that contain no useful information.
+Omit empty sections.
 
-Keep the output concise and fit it within approximately {max_length} tokens.
+Be extremely concise while preserving information required for correct continuation.
 
-Old context:
+Target maximum: approximately {max_length} tokens.
+
+Old working context:
 
 {context}
-
 """
+
     return prompt.strip()

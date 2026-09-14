@@ -11,8 +11,10 @@ logger = get_logger("[CONTEXTBUILDER]")
 
 class ContextBuilder:
 
-    def __init__(self, context_window: ContextWindow):
-
+    def __init__(
+        self,
+        context_window: ContextWindow
+    ):
         self.context_window = context_window
 
         self.DeveloperInstructions_path = (
@@ -24,61 +26,47 @@ class ContextBuilder:
         )
 
     def _load_developer_instructions(self) -> str:
-
         try:
-
             with open(
                 self.DeveloperInstructions_path,
                 "r",
-                encoding="utf-8",
+                encoding="utf-8"
             ) as file:
-
                 return file.read()
 
         except FileNotFoundError:
-
             logger.warning(
                 "Developer instructions file not found at "
                 f"{self.DeveloperInstructions_path}."
             )
-
             return ""
 
         except Exception as e:
-
             logger.error(
                 f"Error loading developer instructions: {e}"
             )
-
             return ""
 
     def _load_system_instructions(self) -> str:
-
         try:
-
             with open(
                 self.SystemInstructions_path,
                 "r",
-                encoding="utf-8",
+                encoding="utf-8"
             ) as file:
-
                 return file.read()
 
         except FileNotFoundError:
-
             logger.warning(
                 "System instructions file not found at "
                 f"{self.SystemInstructions_path}."
             )
-
             return ""
 
         except Exception as e:
-
             logger.error(
                 f"Error loading system instructions: {e}"
             )
-
             return ""
 
     def _event_to_message(
@@ -86,12 +74,9 @@ class ContextBuilder:
         event: MemoryEvent
     ) -> Message:
 
-        event_type = (
-            event.event_type.lower()
-        )
+        event_type = event.event_type.lower()
 
         if event_type == "agent_action":
-
             return {
                 "role": "assistant",
                 "content": event.content,
@@ -101,10 +86,11 @@ class ContextBuilder:
 
             tool_call = (
                 event.metadata.get("tool_call")
+                if event.metadata
+                else None
             )
 
             if tool_call:
-
                 return {
                     "role": "assistant",
                     "content": "",
@@ -117,7 +103,6 @@ class ContextBuilder:
             }
 
         if event_type == "tool_result":
-
             return {
                 "role": "tool",
                 "content": event.content,
@@ -137,7 +122,6 @@ class ContextBuilder:
         root: str,
         state: str = "",
     ):
-
         self.context_window.set_workspace(
             root,
             state,
@@ -148,58 +132,15 @@ class ContextBuilder:
         agent_state: AgentState,
     ) -> str:
 
-        workspace_root = (
-            agent_state.workspace_root
-            or "Not specified"
-        )
-
-        phase = (
-            agent_state.phase
-            or "unknown"
-        )
-
-        iteration = agent_state.iteration
-
-        completion = (
-            "true"
-            if agent_state.completion
-            else "false"
-        )
-
-        parts = [
+        return "\n".join([
             "Current agent state:",
-            f"Phase: {phase}",
-            f"Iteration: {iteration}",
-            f"Completion: {completion}",
-            f"Task: {agent_state.task or 'Not specified'}",
-            f"Workspace root: {workspace_root}",
-        ]
-
-        if agent_state.workspace_files:
-
-            parts.append(
-                "Workspace files:"
-            )
-
-            parts.extend(
-                f"- {path}"
-                for path in agent_state.workspace_files
-            )
-
-        if agent_state.last_action:
-
-            parts.append(
-                f"Last action:\n{agent_state.last_action}"
-            )
-
-        if agent_state.last_observation:
-
-            parts.append(
-                f"Last observation:\n"
-                f"{agent_state.last_observation}"
-            )
-
-        return "\n".join(parts)
+            f"Phase: {agent_state.phase or 'unknown'}",
+            f"Iteration: {agent_state.iteration}",
+            (
+                "Completion: "
+                f"{'true' if agent_state.completion else 'false'}"
+            ),
+        ])
 
     def build_context(
         self,
@@ -209,13 +150,8 @@ class ContextBuilder:
         compacted_history: Optional[List[Message]] = None,
     ):
 
-        recent_history = (
-            stm_result or []
-        )
-
-        compacted_history = (
-            compacted_history or []
-        )
+        recent_history = stm_result or []
+        compacted_history = compacted_history or []
 
         self.context_window.set_system(
             self._load_system_instructions()
@@ -231,38 +167,27 @@ class ContextBuilder:
 
         if agent_state:
 
-            self.context_window.set_task(
-                agent_state.task
+            self.context_window.set_agent_state(
+                self._build_agent_state(agent_state)
             )
 
             self.context_window.set_workspace(
                 agent_state.workspace_root
             )
 
-            self.context_window.set_workspace_files(
-                agent_state.workspace_files
-            )
-
-            self.context_window.set_last_action(
-                agent_state.last_action
-            )
-
-            self.context_window.set_last_observation(
-                agent_state.last_observation
-            )
-
-            self.context_window.set_agent_state(
-                self._build_agent_state(agent_state)
-            )
+            # Never inject the complete workspace tree.
+            self.context_window.set_workspace_files([])
 
         else:
 
-            self.context_window.set_task("")
+            self.context_window.set_agent_state("")
             self.context_window.set_workspace("")
             self.context_window.set_workspace_files([])
-            self.context_window.set_last_action("")
-            self.context_window.set_last_observation("")
-            self.context_window.set_agent_state("")
+
+        # These remain disabled as independent context sections.
+        self.context_window.set_task("")
+        self.context_window.set_last_action("")
+        self.context_window.set_last_observation("")
 
         self.context_window.set_compacted_history(
             compacted_history

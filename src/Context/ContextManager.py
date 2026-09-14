@@ -1,6 +1,5 @@
-#src/Context/ContextManager.py
-
 from typing import Any, Dict, List, Optional
+
 from src.Utils.logger import get_logger
 from src.Context.ContextBuilder import ContextBuilder
 from src.Context.ContextWindow import ContextWindow, Message
@@ -13,11 +12,13 @@ from src.Agent.AgentState import AgentState
 
 logger = get_logger("[CONTEXTMANAGER]")
 
+
 class ContextManager:
+
     def __init__(
         self,
         config: Dict[str, Any],
-        LlmProvider: LlmProvider
+        LlmProvider: LlmProvider,
     ) -> None:
 
         self.config = config
@@ -38,19 +39,29 @@ class ContextManager:
 
         context_config = self.config.get("context") or {}
 
-        self.compaction_target_tokens = int(
-            context_config.get(
-                "compaction_target_tokens",
-                min(
-                    16384,
-                    max(
+
+        self.compaction_target_tokens = max(
+            512,
+            int(
+                context_config.get(
+                    "compaction_target_tokens",
+                    min(
                         4096,
-                        int(self.token_budget.budget * 0.20)
-                    )
+                        int(self.token_budget.budget * 0.05),
+                    ),
                 )
-            )
+            ),
         )
 
+        self.recent_messages_to_keep = max(
+            2,
+            int(
+                context_config.get(
+                    "recent_messages_to_keep",
+                    6,
+                )
+            ),
+        )
 
         self.compacted_trajectory: Optional[
             List[Message]
@@ -58,22 +69,14 @@ class ContextManager:
 
         self.compacted_until_step = 0
 
+        self._last_built_context: Optional[
+            List[Message]
+        ] = None
 
-    def check_context_length(
-        self,
-        previous_response: Optional[LLMResult]
-    ) -> bool:
-
-        if previous_response is None:
-            return True
-
-        return self.token_budget.is_within_budget(
-            previous_response
-        )
 
     def _build_trajectory(
         self,
-        events: List[Any]
+        events: List[Any],
     ) -> List[Message]:
 
         return [
@@ -85,17 +88,29 @@ class ContextManager:
 
     def _message_to_compaction_text(
         self,
-        message: Message
+        message: Message,
     ) -> str:
 
-        role = message.get("role", "unknown")
-        content = message.get("content", "")
+        role = str(
+            message.get(
+                "role",
+                "unknown",
+            )
+        )
+
+        content = str(
+            message.get(
+                "content",
+                "",
+            ) or ""
+        )
 
         parts = [
-            f"[{role}] {content}"
-            if content
-            else f"[{role}]"
+            f"[{role}]"
         ]
+
+        if content:
+            parts.append(content)
 
         tool_name = message.get("tool_name")
 
@@ -113,164 +128,280 @@ class ContextManager:
 
         return " ".join(parts)
 
+
     def _compact_trajectory(
         self,
         trajectory: List[Message],
-        target_tokens: int
+        target_tokens: int,
     ) -> List[Message]:
 
         if not trajectory:
-            return trajectory
+            return []
 
-        text = "\n".join(
+        context_text = "\n".join(
             self._message_to_compaction_text(message)
             for message in trajectory
         )
 
         compacted_text = self.compactor.compact(
-            text,
-            target_tokens
+            context_text,
+            target_tokens,
         )
 
-        if not compacted_text.strip():
-
+        if not compacted_text or not compacted_text.strip():
             logger.error(
-                "Context compactor returned an empty result; "
-                "keeping existing trajectory."
+                "Compactor returned an empty result."
             )
-
-            return trajectory
+            return []
 
         return [
             {
                 "role": "assistant",
                 "content": (
                     "[COMPACTED HISTORY]\n"
-                    + compacted_text
-                )
+                    f"{compacted_text.strip()}"
+                ),
             }
         ]
-    def set_workspace(
-        self,
-        root: str,
-        state: str = ""
-    ):
 
-        self.context_builder.set_workspace(
-            root,
-            state
+
+    def _build_context(
+        self,
+        user_input: str,
+        agent_state: Optional[AgentState],
+        compacted_history: List[Message],
+        recent_trajectory: List[Message],
+    ) -> List[Message]:
+
+        return self.context_builder.build_context(
+            user_input=user_input,
+            stm_result=recent_trajectory,
+            agent_state=agent_state,
+            compacted_history=compacted_history,
         )
+
+
+    def _estimate_tokens(
+        self,
+        messages: List[Message],
+    ) -> int:
+
+        return self.token_budget.estimate_messages_tokens(
+            messages
+        )
+
+
+    def _compact_if_needed(
+        self,
+        messages: List[Message],
+        recent_events: List[Any],
+        compacted_history: List[Message],
+        recent_trajectory: List[Message],
+        current_step: int,
+        user_input: str,
+        agent_state: Optional[AgentState],
+    ) -> List[Message]:
+
+        estimated_tokens = self._estimate_tokens(
+            messages
+        )
+
+
+        if estimated_tokens <= self.token_budget.budget:
+            return messages
+
+        logger.warning(
+            f"Estimated context exceeds budget at step "
+            f"{current_step}: "
+            f"estimated={estimated_tokens}, "
+            f"budget={self.token_budget.budget}"
+        )
+
+        keep_count = min(
+            self.recent_messages_to_keep,
+            len(recent_events),
+        )
+
+        if keep_count > 0:
+
+            events_to_compact = (
+                recent_events[:-keep_count]
+            )
+
+            recent_events_to_keep = (
+                recent_events[-keep_count:]
+            )
+
+        else:
+
+            events_to_compact = list(
+                recent_events
+            )
+
+            recent_events_to_keep = []
+
+
+        trajectory_to_compact = (
+            compacted_history
+            + self._build_trajectory(
+                events_to_compact
+            )
+        )
+
+        if not trajectory_to_compact:
+
+            logger.warning(
+                "Context exceeds budget but there is "
+                "no older trajectory available for compaction."
+            )
+
+            return messages
+
+
+        compacted = self._compact_trajectory(
+            trajectory_to_compact,
+            self.compaction_target_tokens,
+        )
+
+        if not compacted:
+
+            logger.warning(
+                "Context compaction failed; "
+                "keeping existing context."
+            )
+
+            return messages
+
+
+        self.compacted_trajectory = compacted
+
+        if events_to_compact:
+
+            self.compacted_until_step = (
+                events_to_compact[-1].step
+            )
+
+
+        recent_to_keep = self._build_trajectory(
+            recent_events_to_keep
+        )
+
+
+        rebuilt = self._build_context(
+            user_input=user_input,
+            agent_state=agent_state,
+            compacted_history=compacted,
+            recent_trajectory=recent_to_keep,
+        )
+
+
+        final_estimate = self._estimate_tokens(
+            rebuilt
+        )
+
+        logger.info(
+            f"Context compacted at step "
+            f"{current_step}: "
+            f"estimated={final_estimate}, "
+            f"compacted_until_step="
+            f"{self.compacted_until_step}, "
+            f"raw_tail={len(recent_to_keep)}"
+        )
+
+        return rebuilt
+
+
     def build_agent_context(
         self,
         previous_response: Optional[LLMResult],
         user_input: str = "",
         stm_result: Optional[List[Any]] = None,
-        agent_state: Optional[AgentState] = None
+        agent_state: Optional[AgentState] = None,
     ) -> List[Message]:
+
+        if (
+            previous_response is not None
+            and self._last_built_context is not None
+        ):
+
+            self.token_budget.calibrate_from_response(
+                self._last_built_context,
+                previous_response,
+            )
+
 
         events = stm_result or []
 
-        current_step = (
-            events[-1].step
-            if events
-            else self.compacted_until_step
-        )
-        if self.compacted_trajectory is None:
 
-            recent_events = [
-                event
-                for event in events
-                if event.event_type.lower() != "user_input"
-            ]
+        non_user_events = [
+            event
+            for event in events
+            if event.event_type.lower() != "user_input"
+        ]
+
+        if self.compacted_trajectory is None:
 
             compacted_history = []
 
-        else:
+            recent_events = list(
+                non_user_events
+            )
 
-            recent_events = [
-                event
-                for event in events
-                if (
-                    event.step > self.compacted_until_step
-                    and event.event_type.lower()
-                    != "user_input"
-                )
-            ]
+        else:
 
             compacted_history = list(
                 self.compacted_trajectory
             )
 
+            recent_events = [
+                event
+                for event in non_user_events
+                if event.step > self.compacted_until_step
+            ]
+
+
         recent_trajectory = self._build_trajectory(
             recent_events
         )
 
-        self.context_builder.build_context(
+
+        messages = self._build_context(
             user_input=user_input,
-            stm_result=recent_trajectory,
             agent_state=agent_state,
-            compacted_history=compacted_history
+            compacted_history=compacted_history,
+            recent_trajectory=recent_trajectory,
         )
 
-        if not self.check_context_length(
-            previous_response
-        ):
 
-            used_tokens = (
-                self.token_budget.used_tokens(
-                    previous_response
-                )
-                if previous_response is not None
-                else 0
-            )
-
-            logger.warning(
-                f"Context budget exceeded at step "
-                f"{current_step}. "
-                f"Used tokens: {used_tokens}. "
-                f"Budget: {self.token_budget.budget}. "
-                f"Starting compaction to ~"
-                f"{self.compaction_target_tokens} tokens."
-            )
-
-            trajectory_to_compact = (
-                compacted_history
-                + recent_trajectory
-            )
-
-            compacted = self._compact_trajectory(
-                trajectory_to_compact,
-                self.compaction_target_tokens
-            )
-
-            if compacted != trajectory_to_compact:
-
-                self.compacted_trajectory = compacted
-
-                self.compacted_until_step = (
-                    current_step
-                )
-
-                self.context_builder.build_context(
-                    user_input=user_input,
-                    stm_result=[],
-                    agent_state=agent_state,
-                    compacted_history=compacted
-                )
-
-                logger.info(
-                    f"Context compacted successfully "
-                    f"at step {current_step}."
-                )
-
-            else:
-
-                logger.warning(
-                    "Context compaction was not applied."
-                )
-
-        return (
-            self.context_builder
-            .context_window
-            .prompt()
+        messages = self._compact_if_needed(
+            messages=messages,
+            recent_events=recent_events,
+            compacted_history=compacted_history,
+            recent_trajectory=recent_trajectory,
+            current_step=(
+                events[-1].step
+                if events
+                else self.compacted_until_step
+            ),
+            user_input=user_input,
+            agent_state=agent_state,
         )
+
+
+        estimated_tokens = self._estimate_tokens(
+            messages
+        )
+
+        logger.debug(
+            f"Context prepared | "
+            f"estimated_tokens={estimated_tokens}, "
+            f"budget={self.token_budget.budget}, "
+            f"messages={len(messages)}, "
+            f"chars_per_token="
+            f"{self.token_budget.chars_per_token:.3f}"
+        )
+
+        self._last_built_context = messages
+
+
+        return messages

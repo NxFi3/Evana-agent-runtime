@@ -1,5 +1,3 @@
-# src/Context/ContextWindow.py
-
 import platform
 from typing import Any, Dict, List
 
@@ -10,22 +8,33 @@ Message = Dict[str, Any]
 class ContextWindow:
 
     def __init__(self):
-
         self.os_name = platform.system()
+
         self.system = ""
         self.skills = ""
         self.user = ""
+
+        # Kept for compatibility with existing code.
+        # Not rendered separately.
         self.task = ""
+
         self.agent_state = ""
+
         self.workspace_root = ""
         self.workspace_state = ""
+
+        # Kept for compatibility.
+        # Workspace files are intentionally NOT injected into context.
         self.workspace_files: List[str] = []
+
         self.history: List[Message] = []
         self.compacted_history: List[Message] = []
+
+        # Kept for compatibility.
+        # These are already represented in trajectory/history.
         self.last_action = ""
         self.last_observation = ""
 
-  
     def set_system(self, content: str):
         self.system = content or ""
 
@@ -83,8 +92,8 @@ class ContextWindow:
 
         messages: List[Message] = []
 
+        # Stable system instructions.
         if self.system:
-
             messages.append({
                 "role": "system",
                 "content": (
@@ -93,8 +102,8 @@ class ContextWindow:
                 )
             })
 
+        # Stable developer/skill instructions.
         if self.skills:
-
             messages.append({
                 "role": "system",
                 "content": (
@@ -103,94 +112,46 @@ class ContextWindow:
                 )
             })
 
+        # Small dynamic state.
         if self.agent_state:
-
             messages.append({
                 "role": "system",
                 "content": self.agent_state
             })
 
+        # The current task/input is represented exactly once.
         if self.user:
-
             messages.append({
                 "role": "user",
                 "content": self.user
             })
 
-        if self.task:
-
-            messages.append({
-                "role": "system",
-                "content": (
-                    "Current task:\n"
-                    f"{self.task}"
-                )
-            })
-
-
-        if (
-            self.workspace_root
-            or self.workspace_files
-            or self.workspace_state
-        ):
+        # Workspace root is useful, but the complete file tree is not.
+        if self.workspace_root or self.workspace_state:
 
             workspace_parts = []
 
             if self.workspace_root:
-
                 workspace_parts.append(
-                    f"Workspace root: "
-                    f"{self.workspace_root}"
-                )
-
-            if self.workspace_files:
-
-                workspace_parts.append(
-                    "Workspace files:\n"
-                    + "\n".join(
-                        self.workspace_files
-                    )
+                    f"Workspace: {self.workspace_root}"
                 )
 
             if self.workspace_state:
-
                 workspace_parts.append(
-                    "Workspace state:\n"
-                    + self.workspace_state
+                    f"Workspace state:\n{self.workspace_state}"
                 )
 
             messages.append({
                 "role": "system",
-                "content": "\n\n".join(
-                    workspace_parts
-                )
+                "content": "\n\n".join(workspace_parts)
             })
 
-
+        # Old compressed state.
         if self.compacted_history:
+            messages.extend(self.compacted_history)
 
-            messages.extend(
-                self.compacted_history
-            )
-
+        # Only the recent raw trajectory.
         if self.history:
-
-            messages.extend(
-                self.history
-            )
-
-        if self.last_action:
-
-            messages.append({
-                "role": "assistant",
-                "content": self.last_action
-            })
-
-        if self.last_observation:
-
-            messages.append({
-                "role": "tool",
-                "content": self.last_observation
-            })
+            messages.extend(self.history)
 
         return messages
