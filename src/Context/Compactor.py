@@ -13,8 +13,10 @@ class Compactor:
 
     def compact(self, context: str,max_length) -> str:
         try:
-            compacted_context = self.llm_provider.generate(BuildCompactorPrompt(context, max_length)).get('response', '')
+            message = [{'role':'system','content':f'{BuildCompactorPrompt(context, max_length)}'}]
+            compacted_context = self.llm_provider.generate(messages=message)
+
         except Exception as e:
             self.logger.error(f'unexpected Error : {e}')
             return context
-        return compacted_context
+        return compacted_context.response

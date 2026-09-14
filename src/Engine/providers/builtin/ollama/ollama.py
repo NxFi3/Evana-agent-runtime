@@ -13,7 +13,7 @@ logger = get_logger("[OLLAMA]")
 class OllamaProvider(ProviderBase):
     name = "ollama"
     defaultModel = "gpt-oss:20b"
-    defaultConfig: ClassVar[dict] = {"temperature": 0.3}
+    defaultConfig: ClassVar[dict] = {"temperature": 0.3,'num_ctx':120000}
 
     def generate(self, inputs: LLMInput) -> LLMResult:
         model_name = inputs.model_name or self.defaultModel

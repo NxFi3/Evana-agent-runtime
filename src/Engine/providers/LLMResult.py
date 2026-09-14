@@ -5,7 +5,7 @@ from typing import Any , Dict
 @dataclass
 class LLMResult:
     response: str
-    message: Dict
+    message: Dict #raw output
     tool_calls: list
     thinking: str | None
     usage: int
