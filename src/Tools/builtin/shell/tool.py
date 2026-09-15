@@ -62,8 +62,7 @@ class Shell(Tool):
                 "type": "string",
                 "enum": ["Y", "N"],
                 "description": (
-                    "Set to Y to execute the command. "
-                    "Set to N to cancel execution."
+                    "Set to Y to execute the command. " "Set to N to cancel execution."
                 ),
                 "default": "Y",
             },
@@ -133,9 +132,8 @@ class Shell(Tool):
         confirm: str,
     ) -> ToolResult:
         log_path = (
-            (working_directory if working_directory else Path.cwd())
-            / ".evana_shell_background.log"
-        )
+            working_directory if working_directory else Path.cwd()
+        ) / ".evana_shell_background.log"
 
         start_time = time.perf_counter()
 
@@ -150,11 +148,7 @@ class Shell(Tool):
             process = subprocess.Popen(
                 command,
                 shell=True,
-                cwd=(
-                    str(working_directory)
-                    if working_directory
-                    else None
-                ),
+                cwd=(str(working_directory) if working_directory else None),
                 stdin=subprocess.DEVNULL,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
@@ -330,11 +324,7 @@ class Shell(Tool):
             process = subprocess.run(
                 command,
                 shell=True,
-                cwd=(
-                    str(working_directory)
-                    if working_directory
-                    else None
-                ),
+                cwd=(str(working_directory) if working_directory else None),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

@@ -23,17 +23,14 @@ class ContextBuilder:
     def _load_developer_instructions(self) -> str:
 
         try:
-
             with open(
                 self.DeveloperInstructions_path,
                 "r",
                 encoding="utf-8",
             ) as file:
-
                 return file.read()
 
         except FileNotFoundError:
-
             logger.warning(
                 "Developer instructions file not found at "
                 f"{self.DeveloperInstructions_path}."
@@ -42,7 +39,6 @@ class ContextBuilder:
             return ""
 
         except Exception as e:
-
             logger.error(f"Error loading developer instructions: {e}")
 
             return ""
@@ -50,17 +46,14 @@ class ContextBuilder:
     def _load_system_instructions(self) -> str:
 
         try:
-
             with open(
                 self.SystemInstructions_path,
                 "r",
                 encoding="utf-8",
             ) as file:
-
                 return file.read()
 
         except FileNotFoundError:
-
             logger.warning(
                 "System instructions file not found at "
                 f"{self.SystemInstructions_path}."
@@ -69,7 +62,6 @@ class ContextBuilder:
             return ""
 
         except Exception as e:
-
             logger.error(f"Error loading system instructions: {e}")
 
             return ""
@@ -81,8 +73,9 @@ class ContextBuilder:
 
         event_type = str(event.event_type).lower()
 
-        if event_type == "agent_action":
+        metadata = event.metadata if event.metadata else {}
 
+        if event_type == "agent_action":
             return {
                 "role": "assistant",
                 "content": event.content,
@@ -90,23 +83,18 @@ class ContextBuilder:
 
         if event_type == "tool_call":
 
-            metadata = event.metadata if event.metadata else {}
-
             tool_call = metadata.get("tool_call")
 
-            if isinstance(
-                tool_call,
-                dict,
-            ) and tool_call.get("function"):
+            if isinstance(tool_call, dict):
 
-                return {
+                message = {
                     "role": "assistant",
                     "content": "",
                     "tool_calls": [tool_call],
                 }
 
-            # A tool call without structured data is not
-            # useful as a synthetic assistant message.
+                return message
+
             return {
                 "role": "assistant",
                 "content": event.content or "",
@@ -114,10 +102,23 @@ class ContextBuilder:
 
         if event_type == "tool_result":
 
-            return {
+            tool_name = metadata.get("tool_name")
+
+            tool_call_id = metadata.get("tool_call_id")
+
+            message = {
                 "role": "tool",
                 "content": event.content or "",
             }
+
+            # Preserve linkage when available.
+            if tool_name:
+                message["tool_name"] = tool_name
+
+            if tool_call_id:
+                message["tool_call_id"] = tool_call_id
+
+            return message
 
         return {
             "role": "assistant",
@@ -131,7 +132,6 @@ class ContextBuilder:
         root: str,
         state: str = "",
     ):
-
         self.context_window.set_workspace(
             root,
             state,
@@ -145,11 +145,35 @@ class ContextBuilder:
         return "\n".join(
             [
                 "Current agent state:",
-                f"Phase: " f"{agent_state.phase or 'unknown'}",
-                f"Iteration: " f"{agent_state.iteration}",
+                (f"Phase: " f"{agent_state.phase or 'unknown'}"),
+                (f"Iteration: " f"{agent_state.iteration}"),
                 ("Completion: " f"{'true' if agent_state.completion else 'false'}"),
             ]
         )
+
+    def _build_workspace_files(
+        self,
+        agent_state: AgentState,
+    ) -> List[str]:
+        """
+        Return a bounded workspace inventory.
+
+        The actual filesystem refresh happens in Loop.
+        ContextBuilder only forwards the result.
+        """
+
+        files = list(
+            getattr(
+                agent_state,
+                "workspace_files",
+                [],
+            )
+            or []
+        )
+
+        files = sorted(str(path) for path in files)
+
+        return files
 
     def build_context(
         self,
@@ -175,7 +199,9 @@ class ContextBuilder:
 
             self.context_window.set_workspace(agent_state.workspace_root)
 
-            self.context_window.set_workspace_files([])
+            self.context_window.set_workspace_files(
+                self._build_workspace_files(agent_state)
+            )
 
         else:
 
@@ -187,9 +213,25 @@ class ContextBuilder:
 
         self.context_window.set_task("")
 
-        self.context_window.set_last_action("")
+        self.context_window.set_last_action(
+            getattr(
+                agent_state,
+                "last_action",
+                "",
+            )
+            if agent_state
+            else ""
+        )
 
-        self.context_window.set_last_observation("")
+        self.context_window.set_last_observation(
+            getattr(
+                agent_state,
+                "last_observation",
+                "",
+            )
+            if agent_state
+            else ""
+        )
 
         self.context_window.set_compacted_history(compacted_history)
 
