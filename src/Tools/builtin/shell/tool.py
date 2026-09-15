@@ -15,11 +15,13 @@ class Shell(Tool):
     name = "Shell"
 
     MAX_OUTPUT_CHARS = 2400
+    DEFAULT_TIMEOUT = 120
+    BACKGROUND_START_CHECK_SECONDS = 0.15
 
     description = (
         "Execute shell commands. Use background=true for long-running "
         "processes such as web servers, development servers, watchers, "
-        "or any command that must remain running while the agent continues. "
+        "or commands that must remain running while the agent continues. "
         "Background execution returns immediately with the process PID. "
         "Use background=false for commands that should finish before continuing."
     )
@@ -41,17 +43,18 @@ class Shell(Tool):
             "timeout": {
                 "type": "integer",
                 "description": (
-                    "Maximum execution time in seconds for synchronous "
-                    "commands. If omitted, uses 120 seconds."
+                    "Maximum execution time in seconds for synchronous commands. "
+                    "If omitted, uses 120 seconds."
                 ),
-                "default": 120,
+                "default": DEFAULT_TIMEOUT,
             },
             "background": {
                 "type": "boolean",
                 "description": (
                     "Start the command without waiting for it to finish. "
-                    "Set to true for long-running servers or processes. "
-                    "Set to false for normal commands."
+                    "Set to true for long-running servers, watchers, or other "
+                    "processes that must stay alive while the agent continues. "
+                    "Returns the PID immediately."
                 ),
                 "default": False,
             },
@@ -59,7 +62,8 @@ class Shell(Tool):
                 "type": "string",
                 "enum": ["Y", "N"],
                 "description": (
-                    "Set to Y to execute the command. " "Set to N to cancel execution."
+                    "Set to Y to execute the command. "
+                    "Set to N to cancel execution."
                 ),
                 "default": "Y",
             },
@@ -68,105 +72,144 @@ class Shell(Tool):
     }
 
     @classmethod
-    def _bounded_output(
-        cls,
-        value: str,
-    ) -> tuple[str, bool]:
-
+    def _bounded_output(cls, value: str) -> tuple[str, bool]:
         value = str(value or "").strip()
 
         if len(value) <= cls.MAX_OUTPUT_CHARS:
             return value, False
 
         head = int(cls.MAX_OUTPUT_CHARS * 0.60)
-
         tail = cls.MAX_OUTPUT_CHARS - head
 
         return (
             value[:head].rstrip()
-            + "\n\n"
-            + "... OUTPUT TRUNCATED ...\n\n"
+            + "\n\n... OUTPUT TRUNCATED ...\n\n"
             + value[-tail:].lstrip(),
             True,
         )
 
     @staticmethod
-    def _resolve_working_directory(
-        cwd: Optional[str],
-    ) -> Optional[Path]:
+    def _process_group_kwargs() -> dict:
+        """Create platform-specific isolation for background processes."""
+        if os.name == "nt":
+            return {
+                "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP,
+            }
 
-        if not cwd:
-            return None
-
-        working_directory = Path(cwd)
-
-        if not working_directory.exists():
-            raise FileNotFoundError(f"Working directory not found: {cwd}")
-
-        if not working_directory.is_dir():
-            raise NotADirectoryError(f"Working directory is not a directory: {cwd}")
-
-        return working_directory
+        return {
+            "start_new_session": True,
+        }
 
     @staticmethod
-    def _background_log_path(
-        working_directory: Optional[Path],
-    ) -> Path:
+    def _terminate_process_group(process: subprocess.Popen) -> None:
+        """Best-effort termination of a process and its children."""
+        try:
+            if process.poll() is not None:
+                return
 
-        if working_directory:
-            return working_directory / ".evana_shell_background.log"
+            if os.name == "nt":
+                process.send_signal(signal.CTRL_BREAK_EVENT)
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+            else:
+                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=2)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                process.kill()
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
 
-        return Path(".evana_shell_background.log")
-
-    def _execute_background(
+    def _run_background(
         self,
         command: str,
         working_directory: Optional[Path],
-        timeout: int,
+        confirm: str,
     ) -> ToolResult:
+        log_path = (
+            (working_directory if working_directory else Path.cwd())
+            / ".evana_shell_background.log"
+        )
 
-        log_path = self._background_log_path(working_directory)
+        start_time = time.perf_counter()
 
         try:
             log_file = open(
                 log_path,
-                "a",
+                "w",
                 encoding="utf-8",
-                buffering=1,
+                errors="replace",
             )
 
-            start_time = time.perf_counter()
-
-            try:
-                process = subprocess.Popen(
-                    command,
-                    shell=True,
-                    cwd=(str(working_directory) if working_directory else None),
-                    stdin=subprocess.DEVNULL,
-                    stdout=log_file,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    start_new_session=True,
-                )
-
-            except Exception:
-                log_file.close()
-                raise
-
-            log_file.write(
-                "\n"
-                + "=" * 72
-                + "\n"
-                + f"Command: {command}\n"
-                + f"PID: {process.pid}\n"
-                + f"Started: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                + "=" * 72
-                + "\n"
+            process = subprocess.Popen(
+                command,
+                shell=True,
+                cwd=(
+                    str(working_directory)
+                    if working_directory
+                    else None
+                ),
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                text=True,
+                **self._process_group_kwargs(),
             )
 
+            # Keep the file descriptor owned by the child process' output
+            # redirection. The parent no longer needs its Python handle.
             log_file.close()
 
-            duration = time.perf_counter() - start_time
+            # Give commands a short window to fail immediately. This catches
+            # cases such as "Address already in use" instead of falsely
+            # reporting a dead server as successfully started.
+            time.sleep(self.BACKGROUND_START_CHECK_SECONDS)
+            return_code = process.poll()
+
+            if return_code is not None:
+                try:
+                    output = log_path.read_text(
+                        encoding="utf-8",
+                        errors="replace",
+                    )
+                except OSError:
+                    output = ""
+
+                bounded_output, truncated = self._bounded_output(output)
+                content = (
+                    "Background process exited immediately.\n"
+                    f"PID: {process.pid}\n"
+                    f"Exit code: {return_code}\n"
+                    f"Log file: {log_path}"
+                )
+
+                if bounded_output:
+                    content += f"\n\nOUTPUT:\n{bounded_output}"
+
+                return ToolResult(
+                    success=False,
+                    content=content,
+                    metadata={
+                        "command": command,
+                        "cwd": str(working_directory) if working_directory else None,
+                        "background": True,
+                        "pid": process.pid,
+                        "process_group": process.pid if os.name != "nt" else None,
+                        "exit_code": return_code,
+                        "log_file": str(log_path),
+                        "output": output,
+                        "output_truncated": truncated,
+                        "duration": time.perf_counter() - start_time,
+                        "executed": True,
+                        "confirmed": True,
+                    },
+                )
 
             return ToolResult(
                 success=True,
@@ -178,30 +221,28 @@ class Shell(Tool):
                 ),
                 metadata={
                     "command": command,
-                    "cwd": (str(working_directory) if working_directory else None),
-                    "timeout": timeout,
-                    "pid": process.pid,
+                    "cwd": str(working_directory) if working_directory else None,
                     "background": True,
+                    "pid": process.pid,
+                    "process_group": process.pid if os.name != "nt" else None,
                     "log_file": str(log_path),
-                    "started": True,
-                    "duration": duration,
+                    "duration": time.perf_counter() - start_time,
                     "executed": True,
                     "confirmed": True,
                 },
             )
 
-        except Exception as e:
+        except (OSError, PermissionError) as e:
             return ToolResult(
                 success=False,
-                content=("Failed to start background process: " f"{e}"),
+                content=f"Background shell execution failed: {e}",
                 metadata={
                     "command": command,
-                    "cwd": (str(working_directory) if working_directory else None),
-                    "timeout": timeout,
+                    "cwd": str(working_directory) if working_directory else None,
                     "background": True,
-                    "started": False,
+                    "duration": time.perf_counter() - start_time,
                     "executed": False,
-                    "confirmed": True,
+                    "confirmed": confirm == "Y",
                 },
             )
 
@@ -209,23 +250,19 @@ class Shell(Tool):
         self,
         command: str,
         cwd: Optional[str] = None,
-        timeout: int = 120,
+        timeout: int = DEFAULT_TIMEOUT,
         background: bool = False,
         confirm: str = "Y",
     ) -> ToolResult:
-
-        BLOCKED_PATTERNS = [
+        blocked_patterns = [
             r"rm\s+-rf\s+/",
             r":\(\)\{.*\};:",
             r"mkfs\.",
             r"dd\s+if=.*of=/dev/",
         ]
 
-        for pattern in BLOCKED_PATTERNS:
-            if re.search(
-                pattern,
-                command or "",
-            ):
+        for pattern in blocked_patterns:
+            if re.search(pattern, command or ""):
                 return ToolResult(
                     success=False,
                     content="Command blocked for safety.",
@@ -238,7 +275,6 @@ class Shell(Tool):
             )
 
         confirm = str(confirm).strip().upper()
-
         if confirm not in ("Y", "N"):
             return ToolResult(
                 success=False,
@@ -248,7 +284,7 @@ class Shell(Tool):
         if confirm != "Y":
             return ToolResult(
                 success=False,
-                content=("Command execution cancelled. " "Confirmation Y is required."),
+                content="Command execution cancelled. Confirmation Y is required.",
                 metadata={
                     "command": command,
                     "executed": False,
@@ -257,40 +293,35 @@ class Shell(Tool):
             )
 
         if timeout is None:
-            timeout = 120
+            timeout = self.DEFAULT_TIMEOUT
 
-        if (
-            not isinstance(
-                timeout,
-                int,
-            )
-            or timeout <= 0
-        ):
+        if not isinstance(timeout, int) or timeout <= 0:
             return ToolResult(
                 success=False,
                 content="Timeout must be a positive integer.",
             )
 
-        try:
-            working_directory = self._resolve_working_directory(cwd)
+        working_directory = None
+        if cwd:
+            working_directory = Path(cwd)
 
-        except FileNotFoundError as e:
-            return ToolResult(
-                success=False,
-                content=str(e),
-            )
+            if not working_directory.exists():
+                return ToolResult(
+                    success=False,
+                    content=f"Working directory not found: {cwd}",
+                )
 
-        except NotADirectoryError as e:
-            return ToolResult(
-                success=False,
-                content=str(e),
-            )
+            if not working_directory.is_dir():
+                return ToolResult(
+                    success=False,
+                    content=f"Working directory is not a directory: {cwd}",
+                )
 
         if background:
-            return self._execute_background(
+            return self._run_background(
                 command=command,
                 working_directory=working_directory,
-                timeout=timeout,
+                confirm=confirm,
             )
 
         start_time = time.perf_counter()
@@ -299,7 +330,11 @@ class Shell(Tool):
             process = subprocess.run(
                 command,
                 shell=True,
-                cwd=(str(working_directory) if working_directory else None),
+                cwd=(
+                    str(working_directory)
+                    if working_directory
+                    else None
+                ),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -308,24 +343,17 @@ class Shell(Tool):
             )
 
             duration = time.perf_counter() - start_time
-
             stdout = process.stdout or ""
             stderr = process.stderr or ""
 
             bounded_stdout, stdout_truncated = self._bounded_output(stdout)
-
             bounded_stderr, stderr_truncated = self._bounded_output(stderr)
 
-            success = process.returncode == 0
-
             output_parts = []
-
             if bounded_stdout:
                 output_parts.append(f"STDOUT:\n{bounded_stdout}")
-
             if bounded_stderr:
                 output_parts.append(f"STDERR:\n{bounded_stderr}")
-
             if not output_parts:
                 output_parts.append("Command completed with no output.")
 
@@ -335,11 +363,11 @@ class Shell(Tool):
                 output_parts.append("Output truncated for agent context.")
 
             return ToolResult(
-                success=success,
+                success=process.returncode == 0,
                 content="\n\n".join(output_parts),
                 metadata={
                     "command": command,
-                    "cwd": (str(working_directory) if working_directory else None),
+                    "cwd": str(working_directory) if working_directory else None,
                     "timeout": timeout,
                     "background": False,
                     "exit_code": process.returncode,
@@ -347,7 +375,7 @@ class Shell(Tool):
                     "stderr": stderr,
                     "stdout_truncated": stdout_truncated,
                     "stderr_truncated": stderr_truncated,
-                    "output_limit_chars": (self.MAX_OUTPUT_CHARS),
+                    "output_limit_chars": self.MAX_OUTPUT_CHARS,
                     "duration": duration,
                     "executed": True,
                     "confirmed": True,
@@ -355,48 +383,30 @@ class Shell(Tool):
             )
 
         except subprocess.TimeoutExpired as e:
-
             duration = time.perf_counter() - start_time
-
             stdout = e.stdout or ""
             stderr = e.stderr or ""
 
-            if isinstance(
-                stdout,
-                bytes,
-            ):
-                stdout = stdout.decode(
-                    "utf-8",
-                    errors="replace",
-                )
-
-            if isinstance(
-                stderr,
-                bytes,
-            ):
-                stderr = stderr.decode(
-                    "utf-8",
-                    errors="replace",
-                )
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode("utf-8", errors="replace")
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
 
             bounded_stdout, stdout_truncated = self._bounded_output(stdout)
-
             bounded_stderr, stderr_truncated = self._bounded_output(stderr)
 
-            output = f"Command timed out after " f"{timeout} seconds."
-
+            output = f"Command timed out after {timeout} seconds."
             if bounded_stdout:
-                output += f"\n\nSTDOUT:\n" f"{bounded_stdout}"
-
+                output += f"\n\nSTDOUT:\n{bounded_stdout}"
             if bounded_stderr:
-                output += f"\n\nSTDERR:\n" f"{bounded_stderr}"
+                output += f"\n\nSTDERR:\n{bounded_stderr}"
 
             return ToolResult(
                 success=False,
                 content=output,
                 metadata={
                     "command": command,
-                    "cwd": (str(working_directory) if working_directory else None),
+                    "cwd": str(working_directory) if working_directory else None,
                     "timeout": timeout,
                     "background": False,
                     "exit_code": None,
@@ -404,7 +414,7 @@ class Shell(Tool):
                     "stderr": stderr,
                     "stdout_truncated": stdout_truncated,
                     "stderr_truncated": stderr_truncated,
-                    "output_limit_chars": (self.MAX_OUTPUT_CHARS),
+                    "output_limit_chars": self.MAX_OUTPUT_CHARS,
                     "duration": duration,
                     "executed": True,
                     "confirmed": True,
@@ -413,57 +423,48 @@ class Shell(Tool):
             )
 
         except FileNotFoundError as e:
-
-            duration = time.perf_counter() - start_time
-
             return ToolResult(
                 success=False,
-                content=(f"Command execution failed: {e}"),
+                content=f"Command execution failed: {e}",
                 metadata={
                     "command": command,
-                    "cwd": (str(working_directory) if working_directory else None),
+                    "cwd": str(working_directory) if working_directory else None,
                     "timeout": timeout,
                     "background": False,
                     "exit_code": None,
-                    "duration": duration,
+                    "duration": time.perf_counter() - start_time,
                     "executed": False,
                     "confirmed": True,
                 },
             )
 
         except PermissionError:
-
-            duration = time.perf_counter() - start_time
-
             return ToolResult(
                 success=False,
-                content=("Permission denied while " "executing command."),
+                content="Permission denied while executing command.",
                 metadata={
                     "command": command,
-                    "cwd": (str(working_directory) if working_directory else None),
+                    "cwd": str(working_directory) if working_directory else None,
                     "timeout": timeout,
                     "background": False,
                     "exit_code": None,
-                    "duration": duration,
+                    "duration": time.perf_counter() - start_time,
                     "executed": False,
                     "confirmed": True,
                 },
             )
 
         except Exception as e:
-
-            duration = time.perf_counter() - start_time
-
             return ToolResult(
                 success=False,
-                content=(f"Shell execution error: {e}"),
+                content=f"Shell execution error: {e}",
                 metadata={
                     "command": command,
-                    "cwd": (str(working_directory) if working_directory else None),
+                    "cwd": str(working_directory) if working_directory else None,
                     "timeout": timeout,
                     "background": False,
                     "exit_code": None,
-                    "duration": duration,
+                    "duration": time.perf_counter() - start_time,
                     "executed": False,
                     "confirmed": True,
                 },
