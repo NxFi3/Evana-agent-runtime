@@ -1,17 +1,18 @@
-from typing import Any
+import json
 import os
+from typing import Any
+
 import numpy as np
 
 from src.Agent.AgentState import AgentState
 from src.Agent.CompletionEvaluator import CompletionEvaluator
 from src.Context.ContextManager import ContextManager
+from src.Engine.LlmProviderManager import LlmProvider
+from src.Engine.providers.LLMResult import LLMResult
 from src.Memory.MemoryEvent import MemoryEvent
 from src.Memory.MemoryManager import MemoryManager
 from src.Tools.ToolManager import ToolManager
 from src.Utils.logger import get_logger
-
-from src.Engine.LlmProviderManager import LlmProvider
-from src.Engine.providers.LLMResult import LLMResult
 
 
 class Loop:
@@ -34,13 +35,10 @@ class Loop:
         self.state: AgentState | None = None
         self.tool_definitions: list[dict] | None = None
 
-        # Track failures instead of permanently blacklisting calls.
         self.tool_failure_counts: dict[tuple[str, str], int] = {}
         self.max_same_tool_failures = 3
 
-        self.completion_evaluator = CompletionEvaluator(
-            self.llm
-        )
+        self.completion_evaluator = CompletionEvaluator(self.llm)
 
         context_config = self.config.get("context") or {}
 
@@ -75,6 +73,12 @@ class Loop:
         self,
         tool_call: Any,
     ) -> tuple[str, Any]:
+        """
+        Extract tool name and raw arguments from a tool call.
+
+        Raw arguments are intentionally preserved here because the
+        actual ToolManager may expect them in their original format.
+        """
 
         if hasattr(tool_call, "function"):
             function = tool_call.function
@@ -94,7 +98,6 @@ class Loop:
             return name, arguments
 
         if isinstance(tool_call, dict):
-
             function = tool_call.get(
                 "function",
                 {},
@@ -120,18 +123,177 @@ class Loop:
 
         return "", {}
 
+    def _parse_tool_arguments(
+        self,
+        arguments: Any,
+    ) -> dict:
+        """
+        Normalize tool arguments into a dictionary for history,
+        signatures, and internal bookkeeping.
+
+        Providers may return arguments as either:
+        - dict
+        - JSON string
+        - None
+        """
+
+        if isinstance(arguments, dict):
+            return arguments
+
+        if arguments is None:
+            return {}
+
+        if isinstance(arguments, str):
+            arguments = arguments.strip()
+
+            if not arguments:
+                return {}
+
+            try:
+                parsed = json.loads(arguments)
+
+            except (json.JSONDecodeError, TypeError):
+                return {}
+
+            if isinstance(parsed, dict):
+                return parsed
+
+            return {}
+
+        return {}
+
+    def _compact_tool_call_for_history(
+        self,
+        tool_call: Any,
+    ) -> dict:
+        """
+        Preserve only small, task-relevant tool arguments.
+
+        Large payloads such as file contents are intentionally
+        excluded from history. The goal is to preserve enough
+        information for the model to understand what action was
+        performed without duplicating large inputs.
+        """
+
+        name, arguments = self._get_tool_call_data(tool_call)
+
+        name = str(name).strip()
+
+        arguments = self._parse_tool_arguments(arguments)
+
+        call_id = getattr(
+            tool_call,
+            "id",
+            None,
+        )
+
+        call_type = getattr(
+            tool_call,
+            "type",
+            "function",
+        )
+
+        if isinstance(tool_call, dict):
+            call_id = tool_call.get(
+                "id",
+                call_id,
+            )
+
+            call_type = tool_call.get(
+                "type",
+                call_type,
+            )
+
+        compact_arguments: dict[str, Any] = {}
+
+        normalized_name = name.lower()
+
+        if normalized_name in {
+            "read",
+            "readfile",
+        }:
+            for key in (
+                "file_path",
+                "start_line",
+                "end_line",
+            ):
+                if key in arguments:
+                    compact_arguments[key] = arguments[key]
+
+        elif normalized_name in {
+            "create",
+            "createfile",
+            "edit",
+            "editfile",
+        }:
+            if "file_path" in arguments:
+                compact_arguments["file_path"] = arguments["file_path"]
+
+        elif normalized_name == "shell":
+            for key in (
+                "command",
+                "cwd",
+                "background",
+                "timeout",
+            ):
+                if key in arguments:
+                    compact_arguments[key] = arguments[key]
+
+        else:
+            # Unknown tools should still retain their small arguments.
+            # Large string values are excluded.
+            for key, value in arguments.items():
+
+                if isinstance(value, str) and len(value) > 1000:
+                    continue
+
+                compact_arguments[key] = value
+
+        return {
+            "id": call_id,
+            "type": call_type,
+            "function": {
+                "name": name,
+                "arguments": compact_arguments,
+            },
+        }
+
     def _tool_signature(
         self,
         tool_call: Any,
     ) -> tuple[str, str]:
+        """
+        Build a stable signature for repeated-failure detection.
 
-        name, arguments = self._get_tool_call_data(
-            tool_call
-        )
+        JSON arguments are normalized so equivalent dictionaries
+        produce the same signature regardless of key ordering.
+        """
+
+        name, arguments = self._get_tool_call_data(tool_call)
+
+        name = str(name).strip().lower()
+
+        normalized_arguments = self._parse_tool_arguments(arguments)
+
+        try:
+            serialized_arguments = json.dumps(
+                normalized_arguments,
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(
+                    ",",
+                    ":",
+                ),
+            )
+
+        except (TypeError, ValueError):
+            serialized_arguments = str(
+                normalized_arguments,
+            )
 
         return (
-            str(name).strip().lower(),
-            str(arguments),
+            name,
+            serialized_arguments,
         )
 
     def _create_event(
@@ -141,7 +303,6 @@ class Loop:
         source: str,
         metadata: dict | None = None,
     ) -> MemoryEvent:
-
         return MemoryEvent(
             event_type=event_type,
             content=content,
@@ -154,10 +315,7 @@ class Loop:
         self,
         content: str,
     ) -> str:
-
-        content = str(
-            content or ""
-        )
+        content = str(content or "")
 
         max_chars = max(
             1,
@@ -182,11 +340,7 @@ class Loop:
         if head + tail >= len(content):
             return content
 
-        omitted = (
-            len(content)
-            - head
-            - tail
-        )
+        omitted = len(content) - head - tail
 
         return (
             content[:head]
@@ -199,7 +353,6 @@ class Loop:
     def _refresh_workspace_files(
         self,
     ) -> None:
-
         if self.state is None:
             return
 
@@ -210,10 +363,7 @@ class Loop:
             return
 
         if not os.path.isdir(root):
-
-            self.logger.warning(
-                f"Workspace directory does not exist: {root}"
-            )
+            self.logger.warning(f"Workspace directory does not exist: {root}")
 
             self.state.workspace_files = []
             return
@@ -230,7 +380,6 @@ class Loop:
         }
 
         try:
-
             for current_root, dirs, filenames in os.walk(root):
 
                 dirs[:] = [
@@ -240,7 +389,6 @@ class Loop:
                 ]
 
                 for filename in filenames:
-
                     full_path = os.path.join(
                         current_root,
                         filename,
@@ -263,17 +411,13 @@ class Loop:
             self.state.workspace_files = files
 
         except Exception as e:
-
-            self.logger.warning(
-                f"Failed to refresh workspace files: {e}"
-            )
+            self.logger.warning(f"Failed to refresh workspace files: {e}")
 
     def _build_context(
         self,
         user_input: str,
         previous_response: LLMResult | None,
     ):
-
         self._refresh_workspace_files()
 
         return self.context.build_agent_context(
@@ -287,10 +431,7 @@ class Loop:
         self,
         tool_calls: list[Any],
     ) -> dict:
-
-        execution = self.tools.execute(
-            tool_calls
-        )
+        execution = self.tools.execute(tool_calls)
 
         calls = execution.get(
             "calls",
@@ -306,43 +447,22 @@ class Loop:
             calls,
             results,
         ):
+            tool_name, arguments = self._get_tool_call_data(call)
 
-            tool_name, arguments = (
-                self._get_tool_call_data(
-                    call
-                )
-            )
+            tool_name = str(tool_name).strip()
 
-            # Keep action history compact.
-            action = str(
-                tool_name
-            ).strip()
+            self.state.last_action = f"Executed {tool_name}"
 
-            self.state.last_action = (
-                f"Executed {action}"
-            )
-
-            # Do not store full tool arguments in memory.
-            # This prevents large EditFile old_content/new_content
-            # payloads from polluting the long-term context.
-            argument_keys = []
-
-            if isinstance(
-                arguments,
-                dict,
-            ):
-                argument_keys = list(
-                    arguments.keys()
-                )
+            compact_tool_call = self._compact_tool_call_for_history(call)
 
             self.memory.step(
                 self._create_event(
                     event_type="tool_call",
-                    content=action,
+                    content=tool_name,
                     source="llm",
                     metadata={
+                        "tool_call": compact_tool_call,
                         "tool_name": tool_name,
-                        "argument_keys": argument_keys,
                     },
                 )
             )
@@ -353,15 +473,16 @@ class Loop:
                 str(result),
             )
 
-            content = str(
-                content or ""
-            )
+            content = str(content or "")
 
-            result_metadata = getattr(
-                result,
-                "metadata",
-                {},
-            ) or {}
+            result_metadata = (
+                getattr(
+                    result,
+                    "metadata",
+                    {},
+                )
+                or {}
+            )
 
             metadata = {
                 **result_metadata,
@@ -374,14 +495,9 @@ class Loop:
                 True,
             )
 
-            preview = (
-                self._preview_tool_result(
-                    content
-                )
-            )
+            preview = self._preview_tool_result(content)
 
             if preview != content:
-
                 metadata = {
                     **metadata,
                     "truncated": True,
@@ -389,17 +505,10 @@ class Loop:
                     "stored_length": len(preview),
                 }
 
-            self.state.last_observation = (
-                preview
-            )
+            self.state.last_observation = preview
 
             if not success:
-
-                signature = (
-                    self._tool_signature(
-                        call
-                    )
-                )
+                signature = self._tool_signature(call)
 
                 failure_count = (
                     self.tool_failure_counts.get(
@@ -409,13 +518,12 @@ class Loop:
                     + 1
                 )
 
-                self.tool_failure_counts[
-                    signature
-                ] = failure_count
+                self.tool_failure_counts[signature] = failure_count
 
                 self.logger.warning(
                     f"Tool failed: "
-                    f"{tool_name}({arguments}) "
+                    f"{tool_name}"
+                    f"({self._parse_tool_arguments(arguments)}) "
                     f"| failure="
                     f"{failure_count}/"
                     f"{self.max_same_tool_failures}"
@@ -444,9 +552,7 @@ class Loop:
         task: str,
         latest_response: str,
     ):
-        events = self.memory.get_previous_events(
-            100
-        )
+        events = self.memory.get_previous_events(100)
 
         return self.completion_evaluator.evaluate(
             task=task,
@@ -460,7 +566,6 @@ class Loop:
         working_space: str,
         image: np.ndarray | None = None,
     ) -> str:
-
         self.state = AgentState(
             task=user_input.content,
             workspace_root=working_space,
@@ -474,17 +579,10 @@ class Loop:
 
         self._refresh_workspace_files()
 
-        self.context.set_workspace(
-            working_space
-        )
+        self.context.set_workspace(working_space)
 
-        if not self.memory.step(
-            user_input
-        ):
-
-            self.logger.error(
-                "Failed to store user input in memory."
-            )
+        if not self.memory.step(user_input):
+            self.logger.error("Failed to store user input in memory.")
 
             self.state.phase = "failed"
 
@@ -507,13 +605,9 @@ class Loop:
             1,
             max_iterations + 1,
         ):
-
             self.state.iteration = iteration
 
-            self.logger.info(
-                f"Agent iteration "
-                f"{iteration}/{max_iterations}"
-            )
+            self.logger.info(f"Agent iteration " f"{iteration}/{max_iterations}")
 
             context = self._build_context(
                 user_input=user_input.content,
@@ -526,9 +620,7 @@ class Loop:
                 1,
                 4,
             ):
-
                 try:
-
                     result = self.llm.generate(
                         context,
                         self._get_tool_definitions(),
@@ -538,18 +630,12 @@ class Loop:
                     break
 
                 except Exception as e:
-
                     self.logger.warning(
-                        f"LLM generation failed "
-                        f"(attempt {attempt}/3): {e}"
+                        f"LLM generation failed " f"(attempt {attempt}/3): {e}"
                     )
 
                     if attempt == 3:
-
-                        self.logger.error(
-                            "LLM generation failed "
-                            "after 3 attempts."
-                        )
+                        self.logger.error("LLM generation failed " "after 3 attempts.")
 
                         self.state.phase = "failed"
 
@@ -559,11 +645,7 @@ class Loop:
                 result,
                 LLMResult,
             ):
-
-                self.logger.error(
-                    "LLM provider returned "
-                    "an invalid result."
-                )
+                self.logger.error("LLM provider returned " "an invalid result.")
 
                 self.state.phase = "failed"
 
@@ -571,31 +653,18 @@ class Loop:
 
             previous_response = result
 
-            final_response = (
-                result.response or ""
-            )
+            final_response = result.response or ""
 
-            tool_calls = (
-                result.tool_calls or []
-            )
+            tool_calls = result.tool_calls or []
 
             self.logger.info(
-                f"LLM response received | "
-                f"tool_calls={len(tool_calls)}"
+                f"LLM response received | " f"tool_calls={len(tool_calls)}"
             )
-
-            # -------------------------------------------------
-            # No tool calls:
-            # ask the completion judge before stopping.
-            # -------------------------------------------------
 
             if not tool_calls:
 
                 if final_response:
-
-                    self.state.last_action = (
-                        final_response
-                    )
+                    self.state.last_action = final_response
 
                     self.memory.step(
                         self._create_event(
@@ -608,49 +677,34 @@ class Loop:
                         )
                     )
 
-                evaluation = (
-                    self._evaluate_completion(
-                        task=user_input.content,
-                        latest_response=final_response,
-                    )
+                evaluation = self._evaluate_completion(
+                    task=user_input.content,
+                    latest_response=final_response,
                 )
 
                 self.logger.info(
-                    "Completion evaluation | "
-                    f"complete={evaluation.complete}"
+                    "Completion evaluation | " f"complete={evaluation.complete}"
                 )
 
                 if evaluation.complete:
-
                     self.state.phase = "completed"
                     self.state.completion = True
 
-                    self.logger.info(
-                        "Agent turn completed."
-                    )
+                    self.logger.info("Agent turn completed.")
 
                     return final_response
 
                 feedback = (
                     evaluation.feedback.strip()
-                    or (
-                        "The task is not complete. "
-                        "Continue working."
-                    )
+                    or "The task is not complete. Continue working."
                 )
 
-                self.logger.warning(
-                    "Completion rejected. "
-                    f"Feedback: {feedback}"
-                )
+                self.logger.warning("Completion rejected. " f"Feedback: {feedback}")
 
                 self.memory.step(
                     self._create_event(
                         event_type="tool_result",
-                        content=(
-                            "Completion evaluator feedback:\n"
-                            + feedback
-                        ),
+                        content=("Completion evaluator feedback:\n" + feedback),
                         source="system",
                         metadata={
                             "completion_evaluator": True,
@@ -661,43 +715,23 @@ class Loop:
 
                 continue
 
-            # -------------------------------------------------
-            # Prevent infinite repetition of the same failed
-            # tool call while still allowing recovery.
-            # -------------------------------------------------
-
             executable_calls = []
 
             for call in tool_calls:
+                signature = self._tool_signature(call)
 
-                signature = (
-                    self._tool_signature(
-                        call
-                    )
+                failure_count = self.tool_failure_counts.get(
+                    signature,
+                    0,
                 )
 
-                failure_count = (
-                    self.tool_failure_counts.get(
-                        signature,
-                        0,
-                    )
-                )
+                if failure_count >= self.max_same_tool_failures:
+                    tool_name, _ = self._get_tool_call_data(call)
 
-                if (
-                    failure_count
-                    >= self.max_same_tool_failures
-                ):
-
-                    tool_name, _ = (
-                        self._get_tool_call_data(
-                            call
-                        )
-                    )
+                    tool_name = str(tool_name).strip()
 
                     self.logger.warning(
-                        "Blocking repeatedly failed "
-                        f"tool call: "
-                        f"{tool_name}"
+                        "Blocking repeatedly failed " f"tool call: {tool_name}"
                     )
 
                     self.memory.step(
@@ -721,15 +755,11 @@ class Loop:
 
                     continue
 
-                executable_calls.append(
-                    call
-                )
+                executable_calls.append(call)
 
             if not executable_calls:
-
                 self.logger.warning(
-                    "All requested tool calls are "
-                    "currently blocked."
+                    "All requested tool calls are " "currently blocked."
                 )
 
                 self.memory.step(
@@ -750,16 +780,10 @@ class Loop:
                 continue
 
             try:
-
-                self._execute_tools(
-                    executable_calls
-                )
+                self._execute_tools(executable_calls)
 
             except Exception as e:
-
-                self.logger.error(
-                    f"Tool execution failed: {e}"
-                )
+                self.logger.error(f"Tool execution failed: {e}")
 
                 self.state.phase = "failed"
                 self.state.completion = False
@@ -769,9 +793,6 @@ class Loop:
         self.state.phase = "max_iterations"
         self.state.completion = False
 
-        self.logger.warning(
-            f"Maximum agent iterations reached: "
-            f"{max_iterations}"
-        )
+        self.logger.warning(f"Maximum agent iterations reached: " f"{max_iterations}")
 
         return final_response
