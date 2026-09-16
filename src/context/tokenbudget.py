@@ -61,6 +61,9 @@ class TokenBudget:
             )
         )
 
+        if self.chars_per_token <= 0:
+            self.chars_per_token = 4.0
+
         self.calibration_alpha = float(
             self.config.get(
                 "calibration_alpha",
@@ -144,9 +147,7 @@ class TokenBudget:
         messages: list[dict[str, Any]],
     ) -> bool:
 
-        estimated_tokens = self.estimate_messages_tokens(messages)
-
-        return estimated_tokens <= self.budget
+        return self.estimate_messages_tokens(messages) <= self.budget
 
     def remaining_tokens(
         self,
@@ -211,9 +212,9 @@ class TokenBudget:
             ),
         )
 
-        self.chars_per_token = (
-            1.0 - alpha
-        ) * self.chars_per_token + alpha * observed_ratio
+        old_ratio = self.chars_per_token
+
+        self.chars_per_token = (1.0 - alpha) * old_ratio + alpha * observed_ratio
 
     def used_tokens(
         self,

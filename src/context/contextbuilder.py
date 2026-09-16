@@ -29,6 +29,7 @@ class ContextBuilder:
         config: dict[str, Any],
         llm_provider: LlmProvider,
     ) -> None:
+
         self.llm = llm_provider
 
         self.window = ContextWindow()
@@ -50,6 +51,7 @@ class ContextBuilder:
         messages: list[dict[str, str]] = []
 
         for event in events:
+
             if not event.content:
                 continue
 
@@ -98,6 +100,7 @@ class ContextBuilder:
     ) -> dict[str, Any]:
 
         for event in reversed(events):
+
             event_type = getattr(
                 event,
                 "event_type",
@@ -208,33 +211,94 @@ class ContextBuilder:
 
         compacted_message = {
             "role": "system",
+            "content": compacted,
+        }
+
+        system_messages = [
+            message for message in messages if message.get("role") == "system"
+        ]
+
+        system_content = "\n\n".join(
+            message.get(
+                "content",
+                "",
+            )
+            for message in system_messages
+        )
+
+        merged_system = {
+            "role": "system",
             "content": (
+                f"{system_content}\n\n"
                 "<compacted_conversation>\n"
                 f"{compacted}\n"
                 "</compacted_conversation>"
-            ),
+            ).strip(),
         }
 
-        result: list[dict[str, Any]] = []
-        inserted = False
+        return [merged_system]
 
-        for message in messages:
-            if message.get("role") in {
-                "user",
-                "assistant",
-            }:
-                if not inserted:
-                    result.append(compacted_message)
-                    inserted = True
+    def _compact_observation(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
 
-                continue
+        system_messages = [
+            message for message in messages if message.get("role") == "system"
+        ]
 
-            result.append(message)
+        if not system_messages:
+            return messages
 
-        if not inserted:
-            result.append(compacted_message)
+        system_message = system_messages[0]
 
-        return result
+        system_content = str(
+            system_message.get(
+                "content",
+                "",
+            )
+        )
+
+        observation = self.window.last_observation
+
+        if not observation:
+            return messages
+
+        observation_text = ContextWindow._serialize(observation)
+
+        compacted = self.compactor.compact(
+            observation_text,
+            self.tokenbudget.compaction_target_tokens,
+        )
+
+        if not compacted:
+            return messages
+
+        original_section = ContextWindow._section(
+            "last_observation",
+            observation,
+        )
+
+        compacted_section = (
+            "<last_observation>\n" f"{compacted}\n" "</last_observation>"
+        )
+
+        if original_section not in system_content:
+            return messages
+
+        new_content = system_content.replace(
+            original_section,
+            compacted_section,
+            1,
+        )
+
+        return [
+            {
+                "role": "system",
+                "content": new_content,
+            },
+            *[message for message in messages[1:] if message.get("role") != "system"],
+        ]
 
     def _fit_messages(
         self,
@@ -244,28 +308,94 @@ class ContextBuilder:
         if self.tokenbudget.fits(messages):
             return messages
 
-        protected = [message for message in messages if message.get("role") == "system"]
+        system_messages = [
+            message for message in messages if message.get("role") == "system"
+        ]
 
-        others = [message for message in messages if message.get("role") != "system"]
+        other_messages = [
+            message for message in messages if message.get("role") != "system"
+        ]
+
+        if not system_messages:
+            return []
+
+        system_message = system_messages[0]
+
+        if not self.tokenbudget.fits([system_message]):
+            return [
+                {
+                    "role": "system",
+                    "content": self._minimal_system_context(),
+                }
+            ]
 
         selected: list[dict[str, Any]] = []
 
-        for message in reversed(others):
-            candidate = protected + list(reversed(selected)) + [message]
+        for message in reversed(other_messages):
+            candidate = [
+                system_message,
+                *reversed(selected),
+                message,
+            ]
 
             if self.tokenbudget.fits(candidate):
                 selected.append(message)
 
         selected.reverse()
 
-        result = protected + selected
+        result = [
+            system_message,
+            *selected,
+        ]
 
-        # Safety assertion at the builder level.
-        # Normally this should always fit.
-        if not self.tokenbudget.fits(result):
-            return protected
+        if self.tokenbudget.fits(result):
+            return result
 
-        return result
+        return [system_message]
+
+    def _minimal_system_context(
+        self,
+    ) -> str:
+
+        sections: list[str] = []
+
+        if self.system_instruction:
+            sections.append(self.system_instruction)
+
+        if self.task:
+            sections.append(
+                ContextWindow._section(
+                    "task",
+                    self.window.task,
+                )
+            )
+
+        if self.progress:
+            sections.append(
+                ContextWindow._section(
+                    "progress",
+                    self.window.progress,
+                )
+            )
+
+        if self.last_action:
+            sections.append(
+                ContextWindow._section(
+                    "last_action",
+                    self.window.last_action,
+                )
+            )
+
+        sections.append(
+            ContextWindow._section(
+                "runtime",
+                {
+                    "os": self.window.os_name,
+                },
+            )
+        )
+
+        return "\n\n".join(sections)
 
     def build_context(
         self,
@@ -296,4 +426,20 @@ class ContextBuilder:
         if self.tokenbudget.fits(messages):
             return messages
 
-        return self._fit_messages(messages)
+        messages = self._compact_observation(messages)
+
+        if self.tokenbudget.fits(messages):
+            return messages
+
+        messages = self._fit_messages(messages)
+
+        if self.tokenbudget.fits(messages):
+            return messages
+
+        # Absolute fallback.
+        return [
+            {
+                "role": "system",
+                "content": self._minimal_system_context(),
+            }
+        ]

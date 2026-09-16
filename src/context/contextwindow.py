@@ -26,49 +26,49 @@ class ContextWindow:
         self,
         instruction: str,
     ) -> None:
-        self.system_instruction = instruction.strip()
+        self.system_instruction = (instruction or "").strip()
 
     def set_task(
         self,
         content: dict[str, Any],
     ) -> None:
-        self.task = content
+        self.task = content or {}
 
     def set_active_skills(
         self,
         content: dict[str, Any],
     ) -> None:
-        self.active_skills = content
+        self.active_skills = content or {}
 
     def set_agent_state(
         self,
         content: dict[str, Any],
     ) -> None:
-        self.agent_state = content
+        self.agent_state = content or {}
 
     def set_progress(
         self,
         content: dict[str, Any],
     ) -> None:
-        self.progress = content
+        self.progress = content or {}
 
     def set_last_action(
         self,
         content: dict[str, Any],
     ) -> None:
-        self.last_action = content
+        self.last_action = content or {}
 
     def set_last_observation(
         self,
         content: dict[str, Any],
     ) -> None:
-        self.last_observation = content
+        self.last_observation = content or {}
 
     def set_conversation(
         self,
         content: list[Message],
     ) -> None:
-        self.conversation = content
+        self.conversation = content or []
 
     @staticmethod
     def _serialize(
@@ -89,16 +89,14 @@ class ContextWindow:
     ) -> str:
         return f"<{name}>\n" f"{cls._serialize(content)}\n" f"</{name}>"
 
-    def get_prompt(self) -> list[Message]:
-        messages: list[Message] = []
-
-        system_sections: list[str] = []
+    def build_system_content(self) -> str:
+        sections: list[str] = []
 
         if self.system_instruction:
-            system_sections.append(self.system_instruction)
+            sections.append(self.system_instruction)
 
         if self.task:
-            system_sections.append(
+            sections.append(
                 self._section(
                     "task",
                     self.task,
@@ -106,7 +104,7 @@ class ContextWindow:
             )
 
         if self.active_skills:
-            system_sections.append(
+            sections.append(
                 self._section(
                     "active_skills",
                     self.active_skills,
@@ -114,7 +112,7 @@ class ContextWindow:
             )
 
         if self.agent_state:
-            system_sections.append(
+            sections.append(
                 self._section(
                     "agent_state",
                     self.agent_state,
@@ -122,7 +120,7 @@ class ContextWindow:
             )
 
         if self.progress:
-            system_sections.append(
+            sections.append(
                 self._section(
                     "progress",
                     self.progress,
@@ -130,7 +128,7 @@ class ContextWindow:
             )
 
         if self.last_action:
-            system_sections.append(
+            sections.append(
                 self._section(
                     "last_action",
                     self.last_action,
@@ -138,14 +136,14 @@ class ContextWindow:
             )
 
         if self.last_observation:
-            system_sections.append(
+            sections.append(
                 self._section(
                     "last_observation",
                     self.last_observation,
                 )
             )
 
-        system_sections.append(
+        sections.append(
             self._section(
                 "runtime",
                 {
@@ -154,11 +152,18 @@ class ContextWindow:
             )
         )
 
-        if system_sections:
+        return "\n\n".join(sections)
+
+    def get_prompt(self) -> list[Message]:
+        messages: list[Message] = []
+
+        system_content = self.build_system_content()
+
+        if system_content:
             messages.append(
                 {
                     "role": "system",
-                    "content": "\n\n".join(system_sections),
+                    "content": system_content,
                 }
             )
 
