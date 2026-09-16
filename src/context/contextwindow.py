@@ -7,61 +7,60 @@ Message = dict[str, Any]
 
 class ContextWindow:
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.os_name = platform.system()
 
-        self.system: dict = {}
-        self.task: dict = {}
-        self.active_skills: dict = {}
-        self.agent_state: dict = {}
-        self.progress: dict = {}
-        self.last_action: dict = {}
-        self.last_observation: dict = {}
+        self.system_instruction: str = ""
+
+        self.task: dict[str, Any] = {}
+        self.active_skills: dict[str, Any] = {}
+        self.agent_state: dict[str, Any] = {}
+        self.progress: dict[str, Any] = {}
+
+        self.last_action: dict[str, Any] = {}
+        self.last_observation: dict[str, Any] = {}
 
         self.conversation: list[Message] = []
 
     def set_system(
         self,
-        content: dict,
+        instruction: str,
     ) -> None:
-        self.system = {
-            **content,
-            "os": self.os_name,
-        }
+        self.system_instruction = instruction.strip()
 
     def set_task(
         self,
-        content: dict,
+        content: dict[str, Any],
     ) -> None:
         self.task = content
 
     def set_active_skills(
         self,
-        content: dict,
+        content: dict[str, Any],
     ) -> None:
         self.active_skills = content
 
     def set_agent_state(
         self,
-        content: dict,
+        content: dict[str, Any],
     ) -> None:
         self.agent_state = content
 
     def set_progress(
         self,
-        content: dict,
+        content: dict[str, Any],
     ) -> None:
         self.progress = content
 
     def set_last_action(
         self,
-        content: dict,
+        content: dict[str, Any],
     ) -> None:
         self.last_action = content
 
     def set_last_observation(
         self,
-        content: dict,
+        content: dict[str, Any],
     ) -> None:
         self.last_observation = content
 
@@ -73,7 +72,7 @@ class ContextWindow:
 
     @staticmethod
     def _serialize(
-        content: dict,
+        content: dict[str, Any],
     ) -> str:
         return json.dumps(
             content,
@@ -82,80 +81,87 @@ class ContextWindow:
             default=str,
         )
 
-    @staticmethod
-    def _build_system_message(
-        section: str,
-        content: dict,
-    ) -> Message:
-        return {
-            "role": "system",
-            "content": (
-                f"<{section}>\n"
-                f"{ContextWindow._serialize(content)}\n"
-                f"</{section}>"
-            ),
-        }
+    @classmethod
+    def _section(
+        cls,
+        name: str,
+        content: dict[str, Any],
+    ) -> str:
+        return f"<{name}>\n" f"{cls._serialize(content)}\n" f"</{name}>"
 
     def get_prompt(self) -> list[Message]:
         messages: list[Message] = []
 
-        if self.system:
-            messages.append(
-                self._build_system_message(
-                    "system",
-                    self.system,
-                )
-            )
+        system_sections: list[str] = []
+
+        if self.system_instruction:
+            system_sections.append(self.system_instruction)
 
         if self.task:
-            messages.append(
-                self._build_system_message(
+            system_sections.append(
+                self._section(
                     "task",
                     self.task,
                 )
             )
 
         if self.active_skills:
-            messages.append(
-                self._build_system_message(
+            system_sections.append(
+                self._section(
                     "active_skills",
                     self.active_skills,
                 )
             )
 
         if self.agent_state:
-            messages.append(
-                self._build_system_message(
+            system_sections.append(
+                self._section(
                     "agent_state",
                     self.agent_state,
                 )
             )
 
         if self.progress:
-            messages.append(
-                self._build_system_message(
+            system_sections.append(
+                self._section(
                     "progress",
                     self.progress,
                 )
             )
 
         if self.last_action:
-            messages.append(
-                self._build_system_message(
+            system_sections.append(
+                self._section(
                     "last_action",
                     self.last_action,
                 )
             )
 
         if self.last_observation:
-            messages.append(
-                self._build_system_message(
+            system_sections.append(
+                self._section(
                     "last_observation",
                     self.last_observation,
                 )
             )
 
-        if self.conversation:
-            messages.extend(self.conversation)
+        system_sections.append(
+            self._section(
+                "runtime",
+                {
+                    "os": self.os_name,
+                },
+            )
+        )
+
+        if system_sections:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": "\n\n".join(system_sections),
+                }
+            )
+
+        messages.extend(self.conversation)
 
         return messages

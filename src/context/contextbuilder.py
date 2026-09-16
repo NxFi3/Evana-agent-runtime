@@ -1,31 +1,25 @@
-from typing import Any
 from pathlib import Path
-
+from typing import Any
 
 from src.context.compactor import Compactor
+from src.context.contextwindow import ContextWindow
 from src.context.tokenbudget import TokenBudget
 from src.engine.LlmProviderManager import LlmProvider
 from src.models.MemoryEvent import MemoryEvent
-from src.context.contextwindow import ContextWindow
+from src.models.ToolResult import ToolResult
 
 
-def SystemInstructionReader() -> dict[str, str]:
+def SystemInstructionReader() -> str:
+    path = Path("AgentInstruction/systeminstruction.md")
+
     try:
-        path = Path("AgentInstruction/systeminstruction.md")
+        return path.read_text(encoding="utf-8").strip()
 
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read().strip()
+    except FileNotFoundError:
+        return ""
 
-        if not content:
-            return {}
-
-        return {
-            "role": "system",
-            "content": content,
-        }
-
-    except Exception:
-        return {}
+    except OSError:
+        return ""
 
 
 class ContextBuilder:
@@ -38,7 +32,9 @@ class ContextBuilder:
         self.llm = llm_provider
 
         self.window = ContextWindow()
+
         self.compactor = Compactor(self.llm)
+
         self.tokenbudget = TokenBudget(
             config,
             self.llm,
@@ -50,14 +46,24 @@ class ContextBuilder:
         self,
         events: list[MemoryEvent],
     ) -> list[dict[str, str]]:
+
         messages: list[dict[str, str]] = []
 
         for event in events:
             if not event.content:
                 continue
 
-            source = getattr(event, "source", "")
-            event_type = getattr(event, "event_type", "")
+            source = getattr(
+                event,
+                "source",
+                "",
+            )
+
+            event_type = getattr(
+                event,
+                "event_type",
+                "",
+            )
 
             if source == "user" or event_type == "user_input":
                 messages.append(
@@ -67,9 +73,15 @@ class ContextBuilder:
                     }
                 )
 
-            elif source in {"assistant", "llm"} and event_type not in {
+                continue
+
+            if source in {
+                "assistant",
+                "llm",
+            } and event_type not in {
                 "agent_action",
                 "tool_call",
+                "tool_result",
             }:
                 messages.append(
                     {
@@ -84,6 +96,7 @@ class ContextBuilder:
         self,
         events: list[MemoryEvent],
     ) -> dict[str, Any]:
+
         for event in reversed(events):
             event_type = getattr(
                 event,
@@ -91,59 +104,56 @@ class ContextBuilder:
                 "",
             )
 
-            if event_type in {
+            if event_type not in {
                 "agent_action",
                 "tool_call",
             }:
-                return {
-                    "event_type": event_type,
-                    "source": getattr(event, "source", ""),
-                    "content": event.content,
-                    "step": getattr(event, "step", 0),
-                    "timestamp": str(getattr(event, "timestamp", "")),
-                    "metadata": getattr(
+                continue
+
+            return {
+                "event_type": event_type,
+                "source": getattr(
+                    event,
+                    "source",
+                    "",
+                ),
+                "content": event.content,
+                "step": getattr(
+                    event,
+                    "step",
+                    0,
+                ),
+                "timestamp": str(
+                    getattr(
                         event,
-                        "metadata",
-                        {},
-                    ),
-                }
+                        "timestamp",
+                        "",
+                    )
+                ),
+            }
 
         return {}
 
-    def _build_last_observation(
-        self,
-        events: list[MemoryEvent],
+    @staticmethod
+    def _tool_result_to_dict(
+        result: ToolResult,
     ) -> dict[str, Any]:
-        for event in reversed(events):
-            event_type = getattr(
-                event,
-                "event_type",
-                "",
-            )
 
-            if event_type == "tool_result":
-                return {
-                    "event_type": event_type,
-                    "source": getattr(event, "source", ""),
-                    "content": event.content,
-                    "step": getattr(event, "step", 0),
-                    "timestamp": str(getattr(event, "timestamp", "")),
-                    "metadata": getattr(
-                        event,
-                        "metadata",
-                        {},
-                    ),
-                }
-
-        return {}
+        return {
+            "success": result.success,
+            "name": result.name,
+            "content": result.content,
+            "metadata": result.metadata,
+        }
 
     def _populate_window(
         self,
         events: list[MemoryEvent],
-        task: dict[str, Any] | None = None,
-        active_skills: dict[str, Any] | None = None,
-        agent_state: dict[str, Any] | None = None,
-        progress: dict[str, Any] | None = None,
+        tool_result: ToolResult | None,
+        task: dict[str, Any] | None,
+        active_skills: dict[str, Any] | None,
+        agent_state: dict[str, Any] | None,
+        progress: dict[str, Any] | None,
     ) -> None:
 
         self.window.set_system(self.system_instruction)
@@ -160,17 +170,17 @@ class ContextBuilder:
 
         self.window.set_last_action(self._build_last_action(events))
 
-        self.window.set_last_observation(self._build_last_observation(events))
+        if tool_result is not None:
+            self.window.set_last_observation(self._tool_result_to_dict(tool_result))
+        else:
+            self.window.set_last_observation({})
 
     def _compact_conversation(
         self,
         messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
 
-        if not messages:
-            return messages
-
-        conversation_messages = [
+        conversation = [
             message
             for message in messages
             if message.get("role")
@@ -180,22 +190,17 @@ class ContextBuilder:
             }
         ]
 
-        if not conversation_messages:
+        if not conversation:
             return messages
 
         conversation_text = "\n".join(
             f"{message['role']}: " f"{message.get('content', '')}"
-            for message in conversation_messages
-        )
-
-        target_tokens = max(
-            256,
-            int(self.tokenbudget.budget * 0.4),
+            for message in conversation
         )
 
         compacted = self.compactor.compact(
             conversation_text,
-            target_tokens,
+            self.tokenbudget.compaction_target_tokens,
         )
 
         if not compacted:
@@ -231,9 +236,41 @@ class ContextBuilder:
 
         return result
 
+    def _fit_messages(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+
+        if self.tokenbudget.fits(messages):
+            return messages
+
+        protected = [message for message in messages if message.get("role") == "system"]
+
+        others = [message for message in messages if message.get("role") != "system"]
+
+        selected: list[dict[str, Any]] = []
+
+        for message in reversed(others):
+            candidate = protected + list(reversed(selected)) + [message]
+
+            if self.tokenbudget.fits(candidate):
+                selected.append(message)
+
+        selected.reverse()
+
+        result = protected + selected
+
+        # Safety assertion at the builder level.
+        # Normally this should always fit.
+        if not self.tokenbudget.fits(result):
+            return protected
+
+        return result
+
     def build_context(
         self,
         events: list[MemoryEvent],
+        tool_result: ToolResult | None = None,
         task: dict[str, Any] | None = None,
         active_skills: dict[str, Any] | None = None,
         agent_state: dict[str, Any] | None = None,
@@ -242,6 +279,7 @@ class ContextBuilder:
 
         self._populate_window(
             events=events,
+            tool_result=tool_result,
             task=task,
             active_skills=active_skills,
             agent_state=agent_state,
@@ -250,41 +288,12 @@ class ContextBuilder:
 
         messages = self.window.get_prompt()
 
-        estimated_tokens = self.tokenbudget.estimate_messages_tokens(messages)
-
-        if estimated_tokens <= self.tokenbudget.budget:
+        if self.tokenbudget.fits(messages):
             return messages
 
         messages = self._compact_conversation(messages)
 
-        estimated_tokens = self.tokenbudget.estimate_messages_tokens(messages)
-
-        if estimated_tokens <= self.tokenbudget.budget:
+        if self.tokenbudget.fits(messages):
             return messages
 
-        protected_messages = [
-            message for message in messages if message.get("role") == "system"
-        ]
-
-        non_system_messages = [
-            message for message in messages if message.get("role") != "system"
-        ]
-
-        final_messages = list(protected_messages)
-
-        for message in reversed(non_system_messages):
-            candidate = [
-                *protected_messages,
-                message,
-            ]
-
-            if (
-                self.tokenbudget.estimate_messages_tokens(candidate)
-                <= self.tokenbudget.budget
-            ):
-                final_messages.insert(
-                    len(protected_messages),
-                    message,
-                )
-
-        return final_messages
+        return self._fit_messages(messages)
