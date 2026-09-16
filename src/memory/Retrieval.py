@@ -7,7 +7,7 @@ import numpy as np
 from src.models.MemoryItem import MemoryItem
 from src.engine.EmbeddingModel import EmbeddingModel
 from src.engine.RerankerModel import Reranker
-from src.Memory.DatabaseManager import DBManager
+from src.memory.DatabaseManager import DBManager
 from src.utils.logger import get_logger
 
 logger = get_logger("[RETRIEVAL]")

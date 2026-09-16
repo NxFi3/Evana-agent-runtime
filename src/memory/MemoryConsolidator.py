@@ -2,12 +2,12 @@
 
 from typing import List
 from src.utils.logger import get_logger
-from src.Memory.Retrieval import Retrieval
+from src.memory.Retrieval import Retrieval
 from src.engine.LlmProviderManager import LlmProvider
-from src.Memory.DatabaseManager import DBManager
+from src.memory.DatabaseManager import DBManager
 from src.models.MemoryEvent import MemoryEvent
-from src.Memory.MemoryPrompt import build_decision_prompt
-from src.Memory.MemoryParser import MemoryParser
+from src.memory.MemoryPrompt import build_decision_prompt
+from src.memory.MemoryParser import MemoryParser
 
 logger = get_logger("[MCONSOLIDATOR]")
 

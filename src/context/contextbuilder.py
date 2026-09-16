@@ -6,7 +6,6 @@ from src.context.contextwindow import ContextWindow
 from src.context.tokenbudget import TokenBudget
 from src.engine.LlmProviderManager import LlmProvider
 from src.models.MemoryEvent import MemoryEvent
-from src.models.ToolResult import ToolResult
 
 
 def SystemInstructionReader() -> str:
@@ -67,7 +66,9 @@ class ContextBuilder:
                 "",
             )
 
+            # User messages
             if source == "user" or event_type == "user_input":
+
                 messages.append(
                     {
                         "role": "user",
@@ -77,6 +78,8 @@ class ContextBuilder:
 
                 continue
 
+            # Assistant messages
+            # Tool/agent events are represented separately.
             if source in {
                 "assistant",
                 "llm",
@@ -85,6 +88,7 @@ class ContextBuilder:
                 "tool_call",
                 "tool_result",
             }:
+
                 messages.append(
                     {
                         "role": "assistant",
@@ -137,22 +141,49 @@ class ContextBuilder:
 
         return {}
 
-    @staticmethod
-    def _tool_result_to_dict(
-        result: ToolResult,
+    def _build_last_observation(
+        self,
+        events: list[MemoryEvent],
     ) -> dict[str, Any]:
 
-        return {
-            "success": result.success,
-            "name": result.name,
-            "content": result.content,
-            "metadata": result.metadata,
-        }
+        for event in reversed(events):
+
+            event_type = getattr(
+                event,
+                "event_type",
+                "",
+            )
+
+            if event_type != "tool_result":
+                continue
+
+            return {
+                "event_type": event_type,
+                "source": getattr(
+                    event,
+                    "source",
+                    "",
+                ),
+                "content": event.content,
+                "step": getattr(
+                    event,
+                    "step",
+                    0,
+                ),
+                "timestamp": str(
+                    getattr(
+                        event,
+                        "timestamp",
+                        "",
+                    )
+                ),
+            }
+
+        return {}
 
     def _populate_window(
         self,
         events: list[MemoryEvent],
-        tool_result: ToolResult | None,
         task: dict[str, Any] | None,
         active_skills: dict[str, Any] | None,
         agent_state: dict[str, Any] | None,
@@ -173,10 +204,7 @@ class ContextBuilder:
 
         self.window.set_last_action(self._build_last_action(events))
 
-        if tool_result is not None:
-            self.window.set_last_observation(self._tool_result_to_dict(tool_result))
-        else:
-            self.window.set_last_observation({})
+        self.window.set_last_observation(self._build_last_observation(events))
 
     def _compact_conversation(
         self,
@@ -208,11 +236,6 @@ class ContextBuilder:
 
         if not compacted:
             return messages
-
-        compacted_message = {
-            "role": "system",
-            "content": compacted,
-        }
 
         system_messages = [
             message for message in messages if message.get("role") == "system"
@@ -322,6 +345,7 @@ class ContextBuilder:
         system_message = system_messages[0]
 
         if not self.tokenbudget.fits([system_message]):
+
             return [
                 {
                     "role": "system",
@@ -331,7 +355,9 @@ class ContextBuilder:
 
         selected: list[dict[str, Any]] = []
 
+        # Keep the newest messages first.
         for message in reversed(other_messages):
+
             candidate = [
                 system_message,
                 *reversed(selected),
@@ -360,9 +386,11 @@ class ContextBuilder:
         sections: list[str] = []
 
         if self.system_instruction:
+
             sections.append(self.system_instruction)
 
-        if self.task:
+        if self.window.task:
+
             sections.append(
                 ContextWindow._section(
                     "task",
@@ -370,7 +398,8 @@ class ContextBuilder:
                 )
             )
 
-        if self.progress:
+        if self.window.progress:
+
             sections.append(
                 ContextWindow._section(
                     "progress",
@@ -378,7 +407,8 @@ class ContextBuilder:
                 )
             )
 
-        if self.last_action:
+        if self.window.last_action:
+
             sections.append(
                 ContextWindow._section(
                     "last_action",
@@ -400,7 +430,6 @@ class ContextBuilder:
     def build_context(
         self,
         events: list[MemoryEvent],
-        tool_result: ToolResult | None = None,
         task: dict[str, Any] | None = None,
         active_skills: dict[str, Any] | None = None,
         agent_state: dict[str, Any] | None = None,
@@ -409,7 +438,6 @@ class ContextBuilder:
 
         self._populate_window(
             events=events,
-            tool_result=tool_result,
             task=task,
             active_skills=active_skills,
             agent_state=agent_state,
@@ -418,25 +446,29 @@ class ContextBuilder:
 
         messages = self.window.get_prompt()
 
+        # 1. Normal context
         if self.tokenbudget.fits(messages):
             return messages
 
+        # 2. Compact conversation
         messages = self._compact_conversation(messages)
 
         if self.tokenbudget.fits(messages):
             return messages
 
+        # 3. Compact tool observation
         messages = self._compact_observation(messages)
 
         if self.tokenbudget.fits(messages):
             return messages
 
+        # 4. Drop old messages until context fits
         messages = self._fit_messages(messages)
 
         if self.tokenbudget.fits(messages):
             return messages
 
-        # Absolute fallback.
+        # 5. Absolute fallback
         return [
             {
                 "role": "system",
