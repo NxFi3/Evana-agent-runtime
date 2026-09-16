@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from src.Tools.Tool import Tool
+from src.tools.Tool import Tool
 from src.models.ToolResult import ToolResult
 
 
