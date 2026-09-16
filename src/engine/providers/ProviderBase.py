@@ -1,21 +1,24 @@
-#src/Engine/providers/ProviderBase.py
+# src/Engine/providers/ProviderBase.py
 
 from abc import ABC, abstractmethod
 from ast import Dict
 from typing import ClassVar
-from src.Engine.providers.LLMResult import LLMResult 
-from src.Engine.providers.LLMInput import LLMInput
+from src.models.LLMResult import LLMResult
+from src.models.LLMInput import LLMInput
+
 
 class ProviderBase(ABC):
     """
     Base interface for all Providers.
 
     """
-    name:  ClassVar[str] = ""
+
+    name: ClassVar[str] = ""
     defaultModel: ClassVar[str] = ""
-    defaultConfig:dict
+    defaultConfig: dict
+
     @abstractmethod
-    def generate(self,call:LLMInput) -> LLMResult:
+    def generate(self, call: LLMInput) -> LLMResult:
         """
         generate llmresult.
 
@@ -26,4 +29,3 @@ class ProviderBase(ABC):
 
     def __repr__(self) -> str:
         return f"<provider name='{self.name}'>"
-

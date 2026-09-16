@@ -2,10 +2,10 @@ from typing import ClassVar
 
 import ollama
 
-from src.Utils.logger import get_logger
-from src.Engine.providers.ProviderBase import ProviderBase
-from src.Engine.providers.LLMResult import LLMResult
-from src.Engine.providers.LLMInput import LLMInput
+from src.utils.logger import get_logger
+from src.engine.providers.ProviderBase import ProviderBase
+from src.models.LLMResult import LLMResult
+from src.models.LLMInput import LLMInput
 
 logger = get_logger("[OLLAMA]")
 
