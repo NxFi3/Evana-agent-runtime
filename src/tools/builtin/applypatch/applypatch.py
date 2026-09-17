@@ -37,7 +37,7 @@ class ApplyPatch(Tool):
     """
 
     name = "apply_patch"
-
+    action = "modify"
     description = (
         "Apply a patch to one or more text files. "
         "Supports adding, updating, and deleting files. "
@@ -762,3 +762,57 @@ class ApplyPatch(Tool):
 
     def __repr__(self) -> str:
         return f"<Tool name='{self.name}'>"
+
+    def describe_call(
+        self,
+        arguments: dict[str, Any],
+    ) -> dict[str, str]:
+
+        patch = arguments.get(
+            "patch",
+            "",
+        )
+
+        if not isinstance(
+            patch,
+            str,
+        ):
+            return {
+                "action": "modify",
+                "target": "",
+            }
+
+        try:
+
+            operations = self._parse_patch(patch)
+
+        except Exception:
+
+            return {
+                "action": "modify",
+                "target": "",
+            }
+
+        if not operations:
+            return {
+                "action": "modify",
+                "target": "",
+            }
+
+        operation_types = {operation.operation for operation in operations}
+
+        if operation_types == {"add"}:
+            action = "create"
+
+        elif operation_types == {"delete"}:
+            action = "delete"
+
+        else:
+            action = "modify"
+
+        targets = [operation.path for operation in operations if operation.path]
+
+        return {
+            "action": action,
+            "target": ", ".join(targets),
+        }

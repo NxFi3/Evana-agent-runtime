@@ -1,42 +1,102 @@
-#src/Tools/Tool.py
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any, ClassVar
+
+from src.models.ToolResult import ToolResult
 
 
 class Tool(ABC):
-    """
-    Base interface for all tools.
 
-    Every tool must provide:
-        - name
-        - description
-        - parameters
-        - execute()
-    """
+    name: ClassVar[str] = ""
 
-    name: str = ""
-    description: str = ""
-    parameters: Dict[str, Any] = {}
+    description: ClassVar[str] = ""
+
+    parameters: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": True,
+    }
+
+    # Default semantic action for new tools.
+    action: ClassVar[str] = "execute"
 
     @abstractmethod
-    def execute(self, **kwargs) -> Any:
-        """
-        Execute the tool.
-
-        Arguments are provided as keyword arguments and should be
-        validated by the concrete tool.
-
-        Example:
-            tool.execute(query="latest Python release")
-        """
+    def execute(
+        self,
+        **kwargs: Any,
+    ) -> ToolResult:
         raise NotImplementedError
 
-    def get_definition(self) -> Dict[str, Any]:
+    def validate(
+        self,
+        arguments: dict[str, Any],
+    ) -> bool:
         """
-        Return the tool definition used by the agent/LLM.
+        Optional lightweight validation hook.
+
+        Concrete tools can override this.
+        """
+        return True
+
+    def describe_call(
+        self,
+        arguments: dict[str, Any],
+    ) -> dict[str, str]:
+        """
+        Return semantic information about a tool call.
+
+        This method is intentionally generic so AgentState does not need
+        to know concrete tool names.
+
+        New tools can simply define:
+
+            action = "search"
+
+        and optionally override this method when they need a richer target.
         """
 
+        if not isinstance(
+            arguments,
+            dict,
+        ):
+            arguments = {}
+
+        return {
+            "action": self.action,
+            "target": self._infer_target(arguments),
+        }
+
+    @staticmethod
+    def _infer_target(
+        arguments: dict[str, Any],
+    ) -> str:
+
+        for key in (
+            "file_path",
+            "path",
+            "url",
+            "query",
+            "command",
+            "workdir",
+        ):
+
+            value = arguments.get(key)
+
+            if value is None:
+                continue
+
+            if isinstance(
+                value,
+                list,
+            ):
+                return " ".join(str(item) for item in value).strip()
+
+            return str(value).strip()
+
+        return ""
+
+    def get_definition(self) -> dict[str, Any]:
         return {
             "type": "function",
             "function": {
@@ -48,4 +108,3 @@ class Tool(ABC):
 
     def __repr__(self) -> str:
         return f"<Tool name='{self.name}'>"
-

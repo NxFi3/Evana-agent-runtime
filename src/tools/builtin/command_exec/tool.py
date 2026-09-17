@@ -28,7 +28,7 @@ class CommandExec(Tool):
     """
 
     name = "command_exec"
-
+    action = "run"
     DEFAULT_TIMEOUT_MS = 120_000
     MAX_TIMEOUT_MS = 600_000
 

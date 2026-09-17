@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from src.utils.logger import get_logger
 from src.memory.MemoryManager import MemoryManager
 from src.context.contextservice import ContextService
@@ -5,6 +7,7 @@ from src.tools.ToolManager import ToolManager
 from src.models.MemoryEvent import MemoryEvent
 from src.engine.LlmProviderManager import LlmProvider
 from src.models.LLMResult import LLMResult
+from src.agent.agentstate import AgentState
 
 
 class Loop:
@@ -16,6 +19,7 @@ class Loop:
     ) -> None:
 
         self.config = config
+
         self.logger = get_logger("[LOOP]")
 
         self.llm = llm
@@ -32,17 +36,22 @@ class Loop:
             self.llm,
         )
 
+        self.agent_state = AgentState()
+
         try:
+
             self.max_iterations = int(
                 self.config.get(
                     "max_agent_iterations",
                     100,
                 )
             )
+
         except (
             TypeError,
             ValueError,
         ):
+
             self.max_iterations = 100
 
         self.max_iterations = max(
@@ -92,6 +101,16 @@ class Loop:
                     call,
                     "args",
                     {},
+                ),
+                "action": getattr(
+                    call,
+                    "action",
+                    "execute",
+                ),
+                "target": getattr(
+                    call,
+                    "target",
+                    "",
                 ),
                 "valid": getattr(
                     call,
@@ -143,12 +162,15 @@ class Loop:
     def _execute_tool_calls(
         self,
         llmresult: LLMResult,
+        iteration: int,
     ) -> None:
 
         tool_calls = llmresult.tool_calls or []
 
         if not tool_calls:
+
             self.logger.info("No tool calls to execute.")
+
             return
 
         self.logger.info(f"Executing {len(tool_calls)} tool call(s)")
@@ -165,7 +187,6 @@ class Loop:
             [],
         )
 
-        # Log every parsed tool call
         for call in calls:
 
             tool_name = getattr(
@@ -192,16 +213,34 @@ class Loop:
                 False,
             )
 
+            action = getattr(
+                call,
+                "action",
+                "execute",
+            )
+
+            target = getattr(
+                call,
+                "target",
+                "",
+            )
+
             self.logger.info(
                 f"Tool call → {tool_name} "
+                f"| action={action} "
+                f"| target={target} "
                 f"| valid={valid} "
                 f"| approved={approved} "
                 f"| args={args}"
             )
 
+            self.agent_state.begin(
+                tool_call=call,
+                iteration=iteration,
+            )
+
             self.memory.step(self._tool_call_to_event(call))
 
-        # Log every tool result
         for result in results:
 
             tool_name = getattr(
@@ -218,6 +257,8 @@ class Loop:
 
             self.logger.info(f"Tool result ← {tool_name} " f"| success={success}")
 
+            self.agent_state.update_from_result(result)
+
             self.memory.step(self._tool_result_to_event(result))
 
     def run(
@@ -230,8 +271,13 @@ class Loop:
             user_task,
             MemoryEvent,
         ):
+
             self.logger.error("user_task must be a MemoryEvent.")
+
             return None
+
+        # New run = fresh execution state.
+        self.agent_state.reset()
 
         self.logger.info(
             "Starting agent loop | "
@@ -241,24 +287,35 @@ class Loop:
             f"{workspace_directory}"
         )
 
+        # Persist current user task exactly once.
+        existing_events = self.memory.get_previous_events(k=20)
+
+        if not self._contains_event(
+            existing_events,
+            user_task,
+        ):
+
+            if not self.memory.step(user_task):
+
+                self.logger.error("Failed to store user task.")
+
+                return None
+
         for iteration in range(self.max_iterations):
 
-            self.logger.info(f"Iteration " f"{iteration + 1}/" f"{self.max_iterations}")
+            iteration_number = iteration + 1
+
+            self.agent_state.iteration = iteration_number
+
+            self.logger.info(f"Iteration {iteration_number}/" f"{self.max_iterations}")
 
             events = self.memory.get_previous_events(k=20)
-
-            if not self._contains_event(
-                events,
-                user_task,
-            ):
-                events = [
-                    *events,
-                    user_task,
-                ]
 
             context = self.context.get_context(
                 events=events,
                 user_task=user_task,
+                agent_state=self.agent_state,
+                workspace_directory=workspace_directory,
             )
 
             try:
@@ -272,11 +329,19 @@ class Loop:
 
                 self.logger.error(f"LLM generation failed: {e}")
 
+                self.agent_state.fail(str(e))
+
+                self.memory.saveall()
+
                 return None
 
             if llmresult is None:
 
                 self.logger.error("LLM returned None.")
+
+                self.agent_state.fail("LLM returned None.")
+
+                self.memory.saveall()
 
                 return None
 
@@ -286,13 +351,18 @@ class Loop:
 
                 self.memory.step(self._assistant_message_to_event(llmresult))
 
-                self._execute_tool_calls(llmresult)
+                self._execute_tool_calls(
+                    llmresult,
+                    iteration=iteration_number,
+                )
 
                 continue
 
             if llmresult.response:
 
                 self.memory.step(self._assistant_message_to_event(llmresult))
+
+                self.agent_state.complete()
 
                 self.memory.saveall()
 
@@ -301,6 +371,8 @@ class Loop:
             self.logger.warning("LLM produced neither " "response nor tool calls.")
 
         self.logger.warning("Maximum iterations reached.")
+
+        self.agent_state.stop("Maximum iterations reached.")
 
         self.memory.saveall()
 
@@ -312,17 +384,26 @@ class Loop:
         target: MemoryEvent,
     ) -> bool:
 
+        target_id = getattr(
+            target,
+            "id",
+            None,
+        )
+
+        if target_id is None:
+            return False
+
         for event in events:
 
-            if getattr(
-                event,
-                "id",
-                None,
-            ) == getattr(
-                target,
-                "id",
-                None,
+            if (
+                getattr(
+                    event,
+                    "id",
+                    None,
+                )
+                == target_id
             ):
+
                 return True
 
         return False

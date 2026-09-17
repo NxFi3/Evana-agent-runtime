@@ -1,14 +1,21 @@
-# src/models/ToolCall.py
+from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any
 
 
 @dataclass
 class ToolCall:
 
     name: str
+
     approved: bool = False
     valid: bool = False
-    path: str = field(default_factory=str)
-    args: Dict[str, Any] = field(default_factory=dict)
+
+    path: str = ""
+
+    args: dict[str, Any] = field(default_factory=dict)
+
+    # Semantic runtime information.
+    action: str = "execute"
+    target: str = ""

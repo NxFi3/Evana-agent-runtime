@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any
-import json
 
 from src.context.compactor import Compactor
 from src.context.contextwindow import ContextWindow
@@ -10,15 +11,18 @@ from src.models.MemoryEvent import MemoryEvent
 
 
 def SystemInstructionReader() -> str:
+
     path = Path("AgentInstruction/systeminstruction.md")
 
     try:
+
         return path.read_text(encoding="utf-8").strip()
 
-    except FileNotFoundError:
-        return ""
+    except (
+        FileNotFoundError,
+        OSError,
+    ):
 
-    except OSError:
         return ""
 
 
@@ -46,17 +50,21 @@ class ContextBuilder:
     def _build_conversation(
         self,
         events: list[MemoryEvent],
+        exclude_event_id: Any = None,
     ) -> list[dict[str, Any]]:
 
         messages: list[dict[str, Any]] = []
 
         for event in events:
 
-            event_type = getattr(
+            event_id = getattr(
                 event,
-                "event_type",
-                "",
+                "id",
+                None,
             )
+
+            if exclude_event_id is not None and event_id == exclude_event_id:
+                continue
 
             source = getattr(
                 event,
@@ -64,281 +72,72 @@ class ContextBuilder:
                 "",
             )
 
-            metadata = getattr(
-                event,
-                "metadata",
-                {},
-            )
-
-            if not isinstance(
-                metadata,
-                dict,
-            ):
-                metadata = {}
-
-            if (
-                source == "assistant"
-                and event_type == "assistant"
-                and isinstance(
-                    metadata.get("llm_message"),
-                    dict,
-                )
-            ):
-
-                llm_message = dict(metadata["llm_message"])
-
-                role = llm_message.get(
-                    "role",
-                    "assistant",
-                )
-
-                if role == "assistant":
-
-                    message = {
-                        "role": "assistant",
-                        "content": (llm_message.get("content") or ""),
-                    }
-
-                    if llm_message.get("thinking"):
-                        message["thinking"] = llm_message["thinking"]
-
-                    tool_calls = llm_message.get("tool_calls")
-
-                    if tool_calls:
-                        message["tool_calls"] = tool_calls
-
-                    messages.append(message)
-
-                    continue
-
-            if event_type == "tool_result":
-
-                content = getattr(
-                    event,
-                    "content",
-                    "",
-                )
-
-                tool_name = ""
-
-                if isinstance(
-                    content,
-                    dict,
-                ):
-                    tool_name = str(content.get("name", ""))
-
-                    result_content = content.get(
-                        "content",
-                        "",
-                    )
-
-                else:
-                    result_content = content
-
-                if isinstance(
-                    result_content,
-                    str,
-                ):
-                    tool_content = result_content
-                else:
-                    tool_content = json.dumps(
-                        result_content,
-                        ensure_ascii=False,
-                        default=str,
-                    )
-
-                message = {
-                    "role": "tool",
-                    "content": tool_content,
-                }
-
-                if tool_name:
-                    message["tool_name"] = tool_name
-
-                messages.append(message)
-
+            if source != "user":
                 continue
 
             content = getattr(
                 event,
                 "content",
-                "",
+                None,
             )
 
-            if source == "user" or event_type == "user_input":
-
-                if content is None:
-                    continue
-
-                if not isinstance(
-                    content,
-                    str,
-                ):
-                    content = json.dumps(
-                        content,
-                        ensure_ascii=False,
-                        default=str,
-                    )
-
-                if content.strip():
-
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": content,
-                        }
-                    )
-
+            if content is None:
                 continue
 
-            if source in {
-                "assistant",
-                "llm",
-            } and event_type not in {
-                "agent_action",
-                "tool_call",
-                "tool_result",
-            }:
+            if not isinstance(
+                content,
+                str,
+            ):
 
-                if content is None:
-                    continue
+                content = str(content)
 
-                if not isinstance(
-                    content,
-                    str,
-                ):
-                    content = json.dumps(
-                        content,
-                        ensure_ascii=False,
-                        default=str,
-                    )
+            content = content.strip()
 
-                if content.strip():
+            if not content:
+                continue
 
-                    messages.append(
-                        {
-                            "role": "assistant",
-                            "content": content,
-                        }
-                    )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": content,
+                }
+            )
 
         return messages
-
-    def _build_last_action(
-        self,
-        events: list[MemoryEvent],
-    ) -> dict[str, Any]:
-
-        for event in reversed(events):
-
-            event_type = getattr(
-                event,
-                "event_type",
-                "",
-            )
-
-            if event_type not in {
-                "agent_action",
-                "tool_call",
-            }:
-                continue
-
-            return {
-                "event_type": event_type,
-                "source": getattr(
-                    event,
-                    "source",
-                    "",
-                ),
-                "content": getattr(
-                    event,
-                    "content",
-                    "",
-                ),
-                "step": getattr(
-                    event,
-                    "step",
-                    0,
-                ),
-                "timestamp": str(
-                    getattr(
-                        event,
-                        "timestamp",
-                        "",
-                    )
-                ),
-            }
-
-        return {}
-
-    def _build_last_observation(
-        self,
-        events: list[MemoryEvent],
-    ) -> dict[str, Any]:
-
-        for event in reversed(events):
-
-            event_type = getattr(
-                event,
-                "event_type",
-                "",
-            )
-
-            if event_type != "tool_result":
-                continue
-
-            return {
-                "event_type": event_type,
-                "source": getattr(
-                    event,
-                    "source",
-                    "",
-                ),
-                "content": getattr(
-                    event,
-                    "content",
-                    "",
-                ),
-                "step": getattr(
-                    event,
-                    "step",
-                    0,
-                ),
-                "timestamp": str(
-                    getattr(
-                        event,
-                        "timestamp",
-                        "",
-                    )
-                ),
-            }
-
-        return {}
 
     def _populate_window(
         self,
         events: list[MemoryEvent],
         task: dict[str, Any] | None,
-        active_skills: dict[str, Any] | None,
         agent_state: dict[str, Any] | None,
         progress: dict[str, Any] | None,
+        workspace: str | None,
     ) -> None:
 
         self.window.set_system(self.system_instruction)
 
         self.window.set_task(task or {})
 
-        self.window.set_active_skills(active_skills or {})
-
         self.window.set_agent_state(agent_state or {})
 
         self.window.set_progress(progress or {})
 
-        self.window.set_conversation(self._build_conversation(events))
+        self.window.set_runtime(workspace)
 
-        self.window.set_last_action(self._build_last_action(events))
+        task_event_id = None
 
-        self.window.set_last_observation(self._build_last_observation(events))
+        if isinstance(
+            task,
+            dict,
+        ):
+            task_event_id = task.get("id")
+
+        self.window.set_conversation(
+            self._build_conversation(
+                events=events,
+                exclude_event_id=task_event_id,
+            )
+        )
 
     def _compact_conversation(
         self,
@@ -346,21 +145,14 @@ class ContextBuilder:
     ) -> list[dict[str, Any]]:
 
         conversation = [
-            message
-            for message in messages
-            if message.get("role")
-            in {
-                "user",
-                "assistant",
-            }
+            message for message in messages if message.get("role") == "user"
         ]
 
         if not conversation:
             return messages
 
         conversation_text = "\n".join(
-            f"{message['role']}: " f"{message.get('content', '')}"
-            for message in conversation
+            f"user: {message.get('content', '')}" for message in conversation
         )
 
         compacted = self.compactor.compact(
@@ -375,10 +167,15 @@ class ContextBuilder:
             message for message in messages if message.get("role") == "system"
         ]
 
+        if not system_messages:
+            return messages
+
         system_content = "\n\n".join(
-            message.get(
-                "content",
-                "",
+            str(
+                message.get(
+                    "content",
+                    "",
+                )
             )
             for message in system_messages
         )
@@ -393,107 +190,7 @@ class ContextBuilder:
             ).strip(),
         }
 
-        # IMPORTANT:
-        # Preserve the latest tool protocol chain.
-        #
-        # We do not want compaction to delete:
-        # assistant(tool_calls)
-        # tool(result)
-        #
-        # because the next Ollama request depends on it.
-
-        preserved_protocol = []
-
-        last_tool_index = -1
-
-        for index, message in enumerate(messages):
-            if message.get("role") == "tool":
-                last_tool_index = index
-
-        if last_tool_index >= 0:
-
-            assistant_index = -1
-
-            for index in range(
-                last_tool_index,
-                -1,
-                -1,
-            ):
-                message = messages[index]
-
-                if message.get("role") == "assistant" and message.get("tool_calls"):
-                    assistant_index = index
-                    break
-
-            if assistant_index >= 0:
-                preserved_protocol = messages[assistant_index : last_tool_index + 1]
-
-        return [
-            merged_system,
-            *preserved_protocol,
-        ]
-
-    def _compact_observation(
-        self,
-        messages: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-
-        system_messages = [
-            message for message in messages if message.get("role") == "system"
-        ]
-
-        if not system_messages:
-            return messages
-
-        system_message = system_messages[0]
-
-        system_content = str(
-            system_message.get(
-                "content",
-                "",
-            )
-        )
-
-        observation = self.window.last_observation
-
-        if not observation:
-            return messages
-
-        observation_text = ContextWindow._serialize(observation)
-
-        compacted = self.compactor.compact(
-            observation_text,
-            self.tokenbudget.compaction_target_tokens,
-        )
-
-        if not compacted:
-            return messages
-
-        original_section = ContextWindow._section(
-            "last_observation",
-            observation,
-        )
-
-        compacted_section = (
-            "<last_observation>\n" f"{compacted}\n" "</last_observation>"
-        )
-
-        if original_section not in system_content:
-            return messages
-
-        new_content = system_content.replace(
-            original_section,
-            compacted_section,
-            1,
-        )
-
-        return [
-            {
-                "role": "system",
-                "content": new_content,
-            },
-            *[message for message in messages if message.get("role") != "system"],
-        ]
+        return [merged_system]
 
     def _fit_messages(
         self,
@@ -507,10 +204,6 @@ class ContextBuilder:
             message for message in messages if message.get("role") == "system"
         ]
 
-        other_messages = [
-            message for message in messages if message.get("role") != "system"
-        ]
-
         if not system_messages:
             return []
 
@@ -520,13 +213,16 @@ class ContextBuilder:
             return [
                 {
                     "role": "system",
-                    "content": (self._minimal_system_context()),
+                    "content": self._minimal_system_context(),
                 }
             ]
 
+        other_messages = [
+            message for message in messages if message.get("role") != "system"
+        ]
+
         selected: list[dict[str, Any]] = []
 
-        # Newest messages first.
         for message in reversed(other_messages):
 
             candidate = [
@@ -567,6 +263,14 @@ class ContextBuilder:
                 )
             )
 
+        if self.window.agent_state:
+            sections.append(
+                ContextWindow._section(
+                    "agent_state",
+                    self.window.agent_state,
+                )
+            )
+
         if self.window.progress:
             sections.append(
                 ContextWindow._section(
@@ -575,20 +279,10 @@ class ContextBuilder:
                 )
             )
 
-        if self.window.last_action:
-            sections.append(
-                ContextWindow._section(
-                    "last_action",
-                    self.window.last_action,
-                )
-            )
-
         sections.append(
             ContextWindow._section(
                 "runtime",
-                {
-                    "os": self.window.os_name,
-                },
+                self.window.runtime,
             )
         )
 
@@ -598,17 +292,17 @@ class ContextBuilder:
         self,
         events: list[MemoryEvent],
         task: dict[str, Any] | None = None,
-        active_skills: dict[str, Any] | None = None,
         agent_state: dict[str, Any] | None = None,
         progress: dict[str, Any] | None = None,
+        workspace: str | None = None,
     ) -> list[dict[str, Any]]:
 
         self._populate_window(
             events=events,
             task=task,
-            active_skills=active_skills,
             agent_state=agent_state,
             progress=progress,
+            workspace=workspace,
         )
 
         messages = self.window.get_prompt()
@@ -617,25 +311,19 @@ class ContextBuilder:
         if self.tokenbudget.fits(messages):
             return messages
 
-        # 2. Compact conversation
+        # 2. Compact only the user conversation
         messages = self._compact_conversation(messages)
 
         if self.tokenbudget.fits(messages):
             return messages
 
-        # 3. Compact observation
-        messages = self._compact_observation(messages)
-
-        if self.tokenbudget.fits(messages):
-            return messages
-
-        # 4. Drop old messages
+        # 3. Drop oldest conversation messages
         messages = self._fit_messages(messages)
 
         if self.tokenbudget.fits(messages):
             return messages
 
-        # 5. Absolute fallback
+        # 4. Absolute fallback
         return [
             {
                 "role": "system",

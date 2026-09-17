@@ -18,6 +18,8 @@ class ReadFile(Tool):
 
     name = "read_file"
 
+    action = "inspect"
+
     DEFAULT_MAX_OUTPUT_CHARS = 8_000
     MAX_OUTPUT_CHARS = 32_000
     MIN_OUTPUT_CHARS = 512

@@ -9,7 +9,11 @@ from src.models.ToolCall import ToolCall
 
 class ToolDispatcher:
 
-    def __init__(self, tool_registry):
+    def __init__(
+        self,
+        tool_registry,
+    ) -> None:
+
         self.tool_registry = tool_registry
 
     def dispatch(
@@ -20,15 +24,24 @@ class ToolDispatcher:
         if raw_calls is None:
             return []
 
-        if isinstance(raw_calls, (dict, Mapping)):
+        if isinstance(
+            raw_calls,
+            (dict, Mapping),
+        ):
+
             raw_calls = [raw_calls]
 
-        elif not isinstance(raw_calls, (list, tuple)):
+        elif not isinstance(
+            raw_calls,
+            (list, tuple),
+        ):
+
             raw_calls = [raw_calls]
 
         results: list[ToolCall] = []
 
         for raw_call in raw_calls:
+
             results.append(self._dispatch_call(raw_call))
 
         return results
@@ -42,7 +55,10 @@ class ToolDispatcher:
 
             name, arguments = self._extract_tool_call(raw_call)
 
-            if not isinstance(name, str):
+            if not isinstance(
+                name,
+                str,
+            ):
                 return ToolCall(
                     name="",
                     valid=False,
@@ -105,10 +121,64 @@ class ToolDispatcher:
                         valid=False,
                     )
 
+            action = "execute"
+            target = ""
+
+            describe_call = getattr(
+                tool,
+                "describe_call",
+                None,
+            )
+
+            if callable(describe_call):
+
+                try:
+
+                    description = describe_call(arguments)
+
+                    if isinstance(
+                        description,
+                        dict,
+                    ):
+
+                        action = (
+                            str(
+                                description.get(
+                                    "action",
+                                    "execute",
+                                )
+                            ).strip()
+                            or "execute"
+                        )
+
+                        target = str(
+                            description.get(
+                                "target",
+                                "",
+                            )
+                        ).strip()
+
+                except Exception:
+                    action = (
+                        str(
+                            getattr(
+                                tool,
+                                "action",
+                                "execute",
+                            )
+                        ).strip()
+                        or "execute"
+                    )
+
+                    target = ""
+
             return ToolCall(
                 name=name,
                 args=arguments,
                 valid=True,
+                action=action,
+                target=target,
+                path=target,
             )
 
         except Exception:
@@ -142,21 +212,15 @@ class ToolDispatcher:
                 None,
             )
 
-            return name, arguments
+            return (
+                name,
+                arguments,
+            )
 
         if isinstance(
             raw_call,
             Mapping,
         ):
-
-            # OpenAI/Ollama style:
-            #
-            # {
-            #     "function": {
-            #         "name": "...",
-            #         "arguments": {...}
-            #     }
-            # }
 
             nested_function = raw_call.get("function")
 
@@ -164,6 +228,7 @@ class ToolDispatcher:
                 nested_function,
                 Mapping,
             ):
+
                 return (
                     nested_function.get("name"),
                     nested_function.get(
@@ -171,13 +236,6 @@ class ToolDispatcher:
                         {},
                     ),
                 )
-
-            # Flat style:
-            #
-            # {
-            #     "name": "...",
-            #     "arguments": {...}
-            # }
 
             return (
                 raw_call.get("name"),
@@ -187,7 +245,10 @@ class ToolDispatcher:
                 ),
             )
 
-        return None, None
+        return (
+            None,
+            None,
+        )
 
     @staticmethod
     def _normalize_arguments(
@@ -214,11 +275,14 @@ class ToolDispatcher:
                 return {}
 
             try:
+
                 parsed = json.loads(arguments)
+
             except (
                 json.JSONDecodeError,
                 TypeError,
             ):
+
                 return None
 
             if not isinstance(
