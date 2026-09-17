@@ -21,6 +21,12 @@ class ContextWindow:
 
         self.progress: dict[str, Any] = {}
 
+        self.working_set: dict[str, Any] = {}
+
+        self.observation: dict[str, Any] = {}
+
+        self.recent_actions: dict[str, Any] = {}
+
         self.runtime: dict[str, Any] = {
             "os": self.os_name,
         }
@@ -31,29 +37,43 @@ class ContextWindow:
         self,
         instruction: str,
     ) -> None:
-
         self.system_instruction = (instruction or "").strip()
 
     def set_task(
         self,
         content: dict[str, Any],
     ) -> None:
-
         self.task = content or {}
 
     def set_agent_state(
         self,
         content: dict[str, Any],
     ) -> None:
-
         self.agent_state = content or {}
 
     def set_progress(
         self,
         content: dict[str, Any],
     ) -> None:
-
         self.progress = content or {}
+
+    def set_working_set(
+        self,
+        content: dict[str, Any],
+    ) -> None:
+        self.working_set = content or {}
+
+    def set_observation(
+        self,
+        content: dict[str, Any],
+    ) -> None:
+        self.observation = content or {}
+
+    def set_recent_actions(
+        self,
+        content: dict[str, Any],
+    ) -> None:
+        self.recent_actions = content or {}
 
     def set_runtime(
         self,
@@ -71,7 +91,6 @@ class ContextWindow:
         self,
         content: list[Message],
     ) -> None:
-
         self.conversation = content or []
 
     @staticmethod
@@ -134,6 +153,30 @@ class ContextWindow:
                 )
             )
 
+        if self.working_set:
+            sections.append(
+                self._section(
+                    "working_set",
+                    self.working_set,
+                )
+            )
+
+        if self.observation:
+            sections.append(
+                self._section(
+                    "observation",
+                    self.observation,
+                )
+            )
+
+        if self.recent_actions:
+            sections.append(
+                self._section(
+                    "recent_actions",
+                    self.recent_actions,
+                )
+            )
+
         sections.append(
             self._section(
                 "runtime",
@@ -152,7 +195,6 @@ class ContextWindow:
         system_content = self.build_system_content()
 
         if system_content:
-
             messages.append(
                 {
                     "role": "system",

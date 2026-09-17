@@ -54,6 +54,9 @@ class ContextService:
         events: list[MemoryEvent],
         user_task: MemoryEvent,
         agent_state: AgentState,
+        working_set: dict[str, Any] | None = None,
+        observation: dict[str, Any] | None = None,
+        recent_actions: dict[str, Any] | None = None,
         workspace_directory: str | None = None,
     ) -> list[dict[str, Any]]:
 
@@ -62,6 +65,9 @@ class ContextService:
             task=self._task_to_dict(user_task),
             agent_state=(agent_state.state_context()),
             progress=(agent_state.progress_context()),
+            working_set=working_set or {},
+            observation=observation or {},
+            recent_actions=recent_actions or {},
             workspace=workspace_directory,
         )
 

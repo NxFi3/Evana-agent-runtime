@@ -15,14 +15,12 @@ def SystemInstructionReader() -> str:
     path = Path("AgentInstruction/systeminstruction.md")
 
     try:
-
         return path.read_text(encoding="utf-8").strip()
 
     except (
         FileNotFoundError,
         OSError,
     ):
-
         return ""
 
 
@@ -72,6 +70,7 @@ class ContextBuilder:
                 "",
             )
 
+            # Conversation remains user-only.
             if source != "user":
                 continue
 
@@ -88,7 +87,6 @@ class ContextBuilder:
                 content,
                 str,
             ):
-
                 content = str(content)
 
             content = content.strip()
@@ -111,6 +109,9 @@ class ContextBuilder:
         task: dict[str, Any] | None,
         agent_state: dict[str, Any] | None,
         progress: dict[str, Any] | None,
+        working_set: dict[str, Any] | None,
+        observation: dict[str, Any] | None,
+        recent_actions: dict[str, Any] | None,
         workspace: str | None,
     ) -> None:
 
@@ -121,6 +122,12 @@ class ContextBuilder:
         self.window.set_agent_state(agent_state or {})
 
         self.window.set_progress(progress or {})
+
+        self.window.set_working_set(working_set or {})
+
+        self.window.set_observation(observation or {})
+
+        self.window.set_recent_actions(recent_actions or {})
 
         self.window.set_runtime(workspace)
 
@@ -279,6 +286,30 @@ class ContextBuilder:
                 )
             )
 
+        if self.window.working_set:
+            sections.append(
+                ContextWindow._section(
+                    "working_set",
+                    self.window.working_set,
+                )
+            )
+
+        if self.window.observation:
+            sections.append(
+                ContextWindow._section(
+                    "observation",
+                    self.window.observation,
+                )
+            )
+
+        if self.window.recent_actions:
+            sections.append(
+                ContextWindow._section(
+                    "recent_actions",
+                    self.window.recent_actions,
+                )
+            )
+
         sections.append(
             ContextWindow._section(
                 "runtime",
@@ -294,6 +325,9 @@ class ContextBuilder:
         task: dict[str, Any] | None = None,
         agent_state: dict[str, Any] | None = None,
         progress: dict[str, Any] | None = None,
+        working_set: dict[str, Any] | None = None,
+        observation: dict[str, Any] | None = None,
+        recent_actions: dict[str, Any] | None = None,
         workspace: str | None = None,
     ) -> list[dict[str, Any]]:
 
@@ -302,31 +336,34 @@ class ContextBuilder:
             task=task,
             agent_state=agent_state,
             progress=progress,
+            working_set=working_set,
+            observation=observation,
+            recent_actions=recent_actions,
             workspace=workspace,
         )
 
         messages = self.window.get_prompt()
 
-        # 1. Normal context
+        # 1. Normal context.
         if self.tokenbudget.fits(messages):
             return messages
 
-        # 2. Compact only the user conversation
+        # 2. Compact only user conversation.
         messages = self._compact_conversation(messages)
 
         if self.tokenbudget.fits(messages):
             return messages
 
-        # 3. Drop oldest conversation messages
+        # 3. Keep system context and fit user messages.
         messages = self._fit_messages(messages)
 
         if self.tokenbudget.fits(messages):
             return messages
 
-        # 4. Absolute fallback
+        # 4. Absolute fallback.
         return [
             {
                 "role": "system",
-                "content": (self._minimal_system_context()),
+                "content": self._minimal_system_context(),
             }
         ]
