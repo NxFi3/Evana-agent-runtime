@@ -1,0 +1,52 @@
+/* Simple CSS for the Task Manager application */
+
+body {
+    font-family: Arial, sans-serif;
+    margin: 2rem;
+    background-color: #f9f9f9;
+}
+
+h1 {
+    margin-bottom: 1rem;
+}
+
+.create-form {
+    margin-bottom: 1.5rem;
+}
+
+.create-form input {
+    padding: 0.5rem;
+    font-size: 1rem;
+    width: 200px;
+}
+
+.create-form button {
+    padding: 0.5rem 1rem;
+    font-size: 1rem;
+}
+
+.task-list {
+    list-style: none;
+    padding: 0;
+}
+
+.task {
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.task.completed span {
+    text-decoration: line-through;
+    color: #777;
+}
+
+.task form {
+    margin-left: 0.5rem;
+}
+
+.task button {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.9rem;
+}
+

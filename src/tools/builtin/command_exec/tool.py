@@ -8,8 +8,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from src.tools.Tool import Tool
 from src.models.ToolResult import ToolResult
+from src.tools.Tool import Tool
 
 
 class CommandExec(Tool):
@@ -29,6 +29,7 @@ class CommandExec(Tool):
 
     name = "command_exec"
     action = "run"
+
     DEFAULT_TIMEOUT_MS = 120_000
     MAX_TIMEOUT_MS = 600_000
 
@@ -101,7 +102,6 @@ class CommandExec(Tool):
         "additionalProperties": False,
     }
 
-    # PUBLIC API
     def execute(
         self,
         command: list[str],
@@ -155,7 +155,6 @@ class CommandExec(Tool):
             max_output_chars=max_output_chars,
         )
 
-    # VALIDATION
     def _validate_arguments(
         self,
         *,
@@ -189,7 +188,8 @@ class CommandExec(Tool):
                 message="The executable cannot be empty.",
             )
 
-        if not isinstance(timeout_ms, int):
+        # bool is a subclass of int in Python, so explicitly reject it.
+        if isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int):
             return self._error(
                 error_type="invalid_argument",
                 message="timeout_ms must be an integer.",
@@ -201,7 +201,8 @@ class CommandExec(Tool):
                 message=("timeout_ms must be between 1 and " f"{self.MAX_TIMEOUT_MS}."),
             )
 
-        if not isinstance(max_output_chars, int):
+        # bool is also a subclass of int here.
+        if isinstance(max_output_chars, bool) or not isinstance(max_output_chars, int):
             return self._error(
                 error_type="invalid_argument",
                 message="max_output_chars must be an integer.",
@@ -225,7 +226,6 @@ class CommandExec(Tool):
 
         return None
 
-    # FOREGROUND EXECUTION
     def _execute_foreground(
         self,
         *,
@@ -369,7 +369,6 @@ class CommandExec(Tool):
             metadata={},
         )
 
-    # BACKGROUND EXECUTION
     def _execute_background(
         self,
         *,
@@ -387,6 +386,7 @@ class CommandExec(Tool):
                 parents=True,
                 exist_ok=True,
             )
+
         except OSError as exc:
             return self._execution_error(
                 command=command,
@@ -493,11 +493,16 @@ class CommandExec(Tool):
                 max_output_chars,
             )
 
+            # FIX:
+            # A background process that already exited with code 0
+            # is a successful ToolResult.
+            success = exit_code == 0
+
             return ToolResult(
-                success=False,
+                success=success,
                 name=self.name,
                 content={
-                    "success": False,
+                    "success": success,
                     "command": command,
                     "workdir": self._stringify_workdir(workdir),
                     "exit_code": exit_code,
@@ -537,7 +542,6 @@ class CommandExec(Tool):
             metadata={},
         )
 
-    # PROCESS CREATION
     def _spawn(
         self,
         *,
@@ -549,7 +553,7 @@ class CommandExec(Tool):
 
         kwargs: dict[str, Any] = {
             "args": command,
-            "cwd": (str(workdir) if workdir is not None else None),
+            "cwd": str(workdir) if workdir is not None else None,
             "stdin": subprocess.DEVNULL,
             "stdout": stdout,
             "stderr": stderr,
@@ -563,7 +567,6 @@ class CommandExec(Tool):
 
         return subprocess.Popen(**kwargs)
 
-    # PROCESS TERMINATION
     @staticmethod
     def _terminate_process_tree(
         process: subprocess.Popen,
@@ -583,7 +586,6 @@ class CommandExec(Tool):
 
         try:
             # Windows
-
             if os.name == "nt":
 
                 try:
@@ -675,11 +677,13 @@ class CommandExec(Tool):
             ):
                 pass
 
-    # WORKING DIRECTORY
     def _resolve_workdir(
         self,
         workdir: str | None,
-    ) -> tuple[Path | None, ToolResult | None]:
+    ) -> tuple[
+        Path | None,
+        ToolResult | None,
+    ]:
 
         if workdir is None:
             return None, None
@@ -707,7 +711,7 @@ class CommandExec(Tool):
                 None,
                 self._error(
                     error_type="invalid_workdir",
-                    message=(f"Could not resolve workdir: {exc}"),
+                    message=f"Could not resolve workdir: {exc}",
                 ),
             )
 
@@ -716,7 +720,7 @@ class CommandExec(Tool):
                 None,
                 self._error(
                     error_type="invalid_workdir",
-                    message=(f"Working directory does not exist: {path}"),
+                    message=f"Working directory does not exist: {path}",
                 ),
             )
 
@@ -725,17 +729,17 @@ class CommandExec(Tool):
                 None,
                 self._error(
                     error_type="invalid_workdir",
-                    message=(f"Working directory is not a directory: {path}"),
+                    message=f"Working directory is not a directory: {path}",
                 ),
             )
 
         return path, None
 
-    # OUTPUT
     @staticmethod
     def _decode(
         value: Any,
     ) -> str:
+
         if value is None:
             return ""
 
@@ -766,7 +770,8 @@ class CommandExec(Tool):
         bounded = (
             value[:head].rstrip()
             + "\n\n"
-            + f"... {omitted} characters omitted ...\n\n"
+            + f"... {omitted} characters omitted ..."
+            + "\n\n"
             + value[-tail:].lstrip()
         )
 
@@ -783,6 +788,7 @@ class CommandExec(Tool):
                 encoding="utf-8",
                 errors="replace",
             )
+
         except OSError:
             return {
                 "content": "",
@@ -799,7 +805,6 @@ class CommandExec(Tool):
             "truncated": truncated,
         }
 
-    # RESULTS
     def _execution_error(
         self,
         *,

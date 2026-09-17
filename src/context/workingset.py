@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import OrderedDict
 from typing import Any
 
@@ -12,7 +13,8 @@ class WorkingSet:
     Compact model-facing execution state.
 
     Memory keeps the complete runtime history.
-    WorkingSet keeps only the durable facts needed for the next decision.
+    WorkingSet keeps durable facts and evidence needed for the
+    next model decision.
     """
 
     MUTATING_ACTIONS = {
@@ -35,15 +37,35 @@ class WorkingSet:
     MAX_RECENT_ACTIONS = 12
     MAX_OBSERVATIONS = 4
 
+    # Common command flags that change presentation rather than
+    # the underlying verification target.
+    NORMALIZED_COMMAND_FLAGS = {
+        "-q",
+        "-qq",
+        "-v",
+        "-vv",
+        "-vvv",
+        "--quiet",
+        "--verbose",
+        "-s",
+    }
+
     def __init__(self) -> None:
         self.reset()
 
     def reset(self) -> None:
-        self.artifacts: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self.artifacts: OrderedDict[
+            str,
+            dict[str, Any],
+        ] = OrderedDict()
 
         self.facts: list[str] = []
 
         self.unresolved: list[str] = []
+
+        # Maps unresolved human-readable messages to a canonical
+        # source key so later successful results can supersede them.
+        self._unresolved_keys: dict[str, str] = {}
 
         self.verification: dict[str, Any] = {}
 
@@ -63,7 +85,10 @@ class WorkingSet:
         Returns True when the result represents a workspace mutation.
         """
 
-        if not isinstance(result, ToolResult):
+        if not isinstance(
+            result,
+            ToolResult,
+        ):
             return False
 
         tool_name = str(
@@ -118,10 +143,13 @@ class WorkingSet:
         )
 
         if result.success:
-            self._clear_related_failure(target)
+            self._clear_related_failure(
+                tool_call=tool_call,
+                result=result,
+            )
         else:
             self._record_failure(
-                target=target,
+                tool_call=tool_call,
                 result=result,
             )
 
@@ -138,6 +166,7 @@ class WorkingSet:
         result: ToolResult,
         iteration: int,
     ) -> None:
+
         item = {
             "iteration": iteration,
             "tool": tool_name,
@@ -158,6 +187,7 @@ class WorkingSet:
         self,
         result: ToolResult,
     ) -> None:
+
         observation = result.to_observation()
 
         self.observations.append(observation)
@@ -171,6 +201,7 @@ class WorkingSet:
         result: ToolResult,
         iteration: int,
     ) -> None:
+
         action = (
             str(
                 effect.get(
@@ -182,15 +213,17 @@ class WorkingSet:
             .lower()
         )
 
-        target = str(
+        raw_target = str(
             effect.get(
                 "target",
                 "",
             )
         ).strip()
 
-        if not target:
+        if not raw_target:
             return
+
+        target = self._canonical_path(raw_target)
 
         if target in self.artifacts:
             artifact = dict(self.artifacts[target])
@@ -201,11 +234,13 @@ class WorkingSet:
             }
 
         artifact["last_operation"] = action
+
         artifact["last_iteration"] = iteration
 
         preview = self._extract_preview(
             result=result,
             target=target,
+            raw_target=raw_target,
         )
 
         if action in {
@@ -217,7 +252,10 @@ class WorkingSet:
 
             if preview:
                 artifact["preview"] = preview
-                artifact["preview_truncated"] = True
+
+                artifact["preview_truncated"] = (
+                    len(preview) >= self.MAX_ARTIFACT_PREVIEW_CHARS
+                )
 
         elif action in {
             "create",
@@ -228,7 +266,10 @@ class WorkingSet:
 
             if preview:
                 artifact["preview"] = preview
-                artifact["preview_truncated"] = True
+
+                artifact["preview_truncated"] = (
+                    len(preview) >= self.MAX_ARTIFACT_PREVIEW_CHARS
+                )
 
         elif action in {
             "modify",
@@ -240,12 +281,16 @@ class WorkingSet:
 
             if preview:
                 artifact["preview"] = preview
-                artifact["preview_truncated"] = True
+
+                artifact["preview_truncated"] = (
+                    len(preview) >= self.MAX_ARTIFACT_PREVIEW_CHARS
+                )
             else:
                 artifact.pop(
                     "preview",
                     None,
                 )
+
                 artifact.pop(
                     "preview_truncated",
                     None,
@@ -281,6 +326,9 @@ class WorkingSet:
         target: str,
         artifact: dict[str, Any],
     ) -> None:
+
+        target = self._canonical_path(target)
+
         if target in self.artifacts:
             del self.artifacts[target]
 
@@ -293,10 +341,15 @@ class WorkingSet:
         self,
         result: ToolResult,
         target: str,
+        raw_target: str,
     ) -> str:
+
         evidence = result.evidence
 
-        if not isinstance(evidence, dict):
+        if not isinstance(
+            evidence,
+            dict,
+        ):
             return ""
 
         evidence_path = str(
@@ -306,36 +359,73 @@ class WorkingSet:
             )
         ).strip()
 
-        if (
-            evidence_path
-            and evidence_path == target
-            and isinstance(
+        # ReadFile usually gives an absolute resolved path.
+        # Normalize both sides before comparing.
+        if evidence_path:
+
+            normalized_evidence_path = self._canonical_path(evidence_path)
+
+            normalized_target = self._canonical_path(target)
+
+            if normalized_evidence_path == normalized_target and isinstance(
                 evidence.get("content"),
                 str,
-            )
-        ):
-            return self._truncate(
-                evidence["content"],
-                self.MAX_ARTIFACT_PREVIEW_CHARS,
-            )
+            ):
+                return self._truncate(
+                    evidence["content"],
+                    self.MAX_ARTIFACT_PREVIEW_CHARS,
+                )
 
         files = result.content.get("files")
 
-        if not isinstance(files, list):
+        if not isinstance(
+            files,
+            list,
+        ):
             return ""
 
         for item in files:
-            if not isinstance(item, dict):
+
+            if not isinstance(
+                item,
+                dict,
+            ):
                 continue
 
             item_target = str(item.get("path") or item.get("target") or "").strip()
 
-            if item_target != target:
+            if not item_target:
                 continue
 
+            if self._canonical_path(item_target) != self._canonical_path(target):
+                continue
+
+            # New ApplyPatch contract:
+            # bounded model-facing preview.
+            preview = item.get("content_preview")
+
+            if (
+                isinstance(
+                    preview,
+                    str,
+                )
+                and preview
+            ):
+                return self._truncate(
+                    preview,
+                    self.MAX_ARTIFACT_PREVIEW_CHARS,
+                )
+
+            # Backward-compatible support for full content.
             content = item.get("content")
 
-            if isinstance(content, str) and content:
+            if (
+                isinstance(
+                    content,
+                    str,
+                )
+                and content
+            ):
                 return self._truncate(
                     content,
                     self.MAX_ARTIFACT_PREVIEW_CHARS,
@@ -348,16 +438,27 @@ class WorkingSet:
         tool_call: ToolCall,
         result: ToolResult,
     ) -> None:
+
         content = result.content
 
-        if not isinstance(content, dict):
+        if not isinstance(
+            content,
+            dict,
+        ):
             return
 
         if "exit_code" not in content:
             return
 
-        stdout = content.get("stdout", "")
-        stderr = content.get("stderr", "")
+        stdout = content.get(
+            "stdout",
+            "",
+        )
+
+        stderr = content.get(
+            "stderr",
+            "",
+        )
 
         output_parts: list[str] = []
 
@@ -369,6 +470,8 @@ class WorkingSet:
 
         output = "\n".join(output_parts)
 
+        command = content.get("command")
+
         self.verification = {
             "tool": str(
                 getattr(
@@ -377,6 +480,8 @@ class WorkingSet:
                     result.name,
                 )
             ),
+            "command": command,
+            "workdir": content.get("workdir"),
             "success": result.success,
             "exit_code": content.get("exit_code"),
             "timed_out": content.get(
@@ -395,6 +500,7 @@ class WorkingSet:
         tool_call: ToolCall,
         result: ToolResult,
     ) -> None:
+
         if not result.summary:
             return
 
@@ -413,45 +519,179 @@ class WorkingSet:
 
     def _record_failure(
         self,
-        target: str,
+        tool_call: ToolCall,
         result: ToolResult,
     ) -> None:
+
         message = result.summary.strip()
 
         if not message:
             return
 
+        source_key = self._execution_scope_key(
+            tool_call=tool_call,
+            result=result,
+        )
+
+        target = str(
+            getattr(
+                tool_call,
+                "target",
+                "",
+            )
+        ).strip()
+
         if target:
             message = f"{target}: {message}"
 
-        if message in self.unresolved:
-            self.unresolved.remove(message)
+        # Remove an older failure from the same execution scope.
+        existing_messages = [
+            item
+            for item in self.unresolved
+            if self._unresolved_keys.get(item) == source_key
+        ]
+
+        for item in existing_messages:
+            self.unresolved.remove(item)
+
+            self._unresolved_keys.pop(
+                item,
+                None,
+            )
 
         self.unresolved.append(message)
 
+        self._unresolved_keys[message] = source_key
+
         if len(self.unresolved) > self.MAX_UNRESOLVED:
+
+            removed = self.unresolved[: len(self.unresolved) - self.MAX_UNRESOLVED]
+
             del self.unresolved[: len(self.unresolved) - self.MAX_UNRESOLVED]
+
+            for item in removed:
+                self._unresolved_keys.pop(
+                    item,
+                    None,
+                )
 
     def _clear_related_failure(
         self,
-        target: str,
+        tool_call: ToolCall,
+        result: ToolResult,
     ) -> None:
-        if not target:
-            return
 
-        normalized_target = target.strip()
+        source_key = self._execution_scope_key(
+            tool_call=tool_call,
+            result=result,
+        )
 
-        self.unresolved = [
-            item
-            for item in self.unresolved
-            if not item.startswith(f"{normalized_target}:")
-        ]
+        remaining: list[str] = []
+
+        for item in self.unresolved:
+
+            if self._unresolved_keys.get(item) == source_key:
+                self._unresolved_keys.pop(
+                    item,
+                    None,
+                )
+                continue
+
+            remaining.append(item)
+
+        self.unresolved = remaining
+
+    def _execution_scope_key(
+        self,
+        tool_call: ToolCall,
+        result: ToolResult,
+    ) -> str:
+        """
+        Produce a stable identity for an execution scope.
+
+        This lets:
+            pytest -q
+        and:
+            pytest -q -vv
+
+        refer to the same verification scope.
+
+        It does not make unrelated commands equivalent.
+        """
+
+        tool_name = (
+            str(
+                getattr(
+                    tool_call,
+                    "name",
+                    result.name,
+                )
+            )
+            .strip()
+            .lower()
+        )
+
+        content = result.content
+
+        if isinstance(content, dict) and "command" in content:
+            command = content.get("command")
+
+            if isinstance(
+                command,
+                list,
+            ):
+                normalized_command: list[str] = []
+
+                for part in command:
+
+                    part = str(part)
+
+                    if part in self.NORMALIZED_COMMAND_FLAGS:
+                        continue
+
+                    normalized_command.append(part)
+
+                workdir = str(
+                    content.get(
+                        "workdir",
+                        "",
+                    )
+                    or ""
+                ).strip()
+
+                return "command:" + json.dumps(
+                    {
+                        "tool": tool_name,
+                        "command": normalized_command,
+                        "workdir": (self._canonical_path(workdir) if workdir else ""),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+
+        target = str(
+            getattr(
+                tool_call,
+                "target",
+                "",
+            )
+        ).strip()
+
+        return "target:" + json.dumps(
+            {
+                "tool": tool_name,
+                "target": self._canonical_path(target) if target else "",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
 
     def _result_changes_workspace(
         self,
         tool_call: ToolCall,
         result: ToolResult,
     ) -> bool:
+
         if not result.success:
             return False
 
@@ -471,6 +711,7 @@ class WorkingSet:
             return True
 
         for effect in result.effects:
+
             action = (
                 str(
                     effect.get(
@@ -492,7 +733,10 @@ class WorkingSet:
             )
         )
 
-    def context(self) -> dict[str, Any]:
+    def context(
+        self,
+    ) -> dict[str, Any]:
+
         return {
             "artifacts": dict(self.artifacts),
             "verification": dict(self.verification),
@@ -500,21 +744,53 @@ class WorkingSet:
             "unresolved": list(self.unresolved),
         }
 
-    def observation_context(self) -> dict[str, Any]:
+    def observation_context(
+        self,
+    ) -> dict[str, Any]:
+
         return {
             "items": list(self.observations),
         }
 
-    def recent_actions_context(self) -> dict[str, Any]:
+    def recent_actions_context(
+        self,
+    ) -> dict[str, Any]:
+
         return {
             "items": list(self.recent_actions),
         }
+
+    @staticmethod
+    def _canonical_path(
+        value: str,
+    ) -> str:
+
+        value = str(value or "").strip()
+
+        if not value:
+            return ""
+
+        # Do not transform shell commands into filesystem paths.
+        if " " in value and not value.startswith("/") and not value.startswith("."):
+            return value
+
+        try:
+            from pathlib import Path
+
+            return str(Path(value).expanduser().resolve(strict=False))
+
+        except (
+            OSError,
+            RuntimeError,
+        ):
+            return value
 
     @staticmethod
     def _truncate(
         value: str,
         limit: int,
     ) -> str:
+
         value = str(value)
 
         if len(value) <= limit:
