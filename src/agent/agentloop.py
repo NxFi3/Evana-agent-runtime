@@ -18,10 +18,16 @@ class Loop:
         self.tool = ToolManager()
         self.context = ContextService(self.config, self.llm)
 
-        self.max_iterations = self.config.get(
-            "iterations",
-            100,
-        )
+        # config.json uses max_agent_iterations
+        try:
+            self.max_iterations = int(self.config.get("max_agent_iterations", 100))
+        except (TypeError, ValueError):
+            self.max_iterations = 100
+
+        self.max_iterations = max(1, self.max_iterations)
+
+        # Discover tools once and reuse their definitions.
+        self.tool_definitions = self.tool.get_tools()
 
     @staticmethod
     def _tool_call_to_event(call) -> MemoryEvent:
@@ -29,10 +35,11 @@ class Loop:
             event_type="tool_call",
             source="agent",
             content={
-                "name": call.name,
-                "args": call.args,
-                "valid": call.valid,
-                "approved": call.approved,
+                "name": getattr(call, "name", ""),
+                "args": getattr(call, "args", {}),
+                "valid": getattr(call, "valid", False),
+                "approved": getattr(call, "approved", False),
+                "id": getattr(call, "id", None),
             },
             metadata={},
         )
@@ -43,16 +50,15 @@ class Loop:
             event_type="tool_result",
             source="tool",
             content={
-                "name": result.name,
-                "success": result.success,
-                "content": result.content,
-                "metadata": result.metadata,
+                "name": getattr(result, "name", ""),
+                "success": getattr(result, "success", False),
+                "content": getattr(result, "content", ""),
+                "metadata": getattr(result, "metadata", {}),
             },
             metadata={},
         )
 
     def _execute_tool_calls(self, llmresult: LLMResult) -> None:
-
         tool_result = self.tool.execute(llmresult.tool_calls)
 
         calls = tool_result.get("calls", [])
@@ -69,6 +75,11 @@ class Loop:
         user_task: MemoryEvent,
         workspace_directory: str = "EvanaEval",
     ):
+        self.logger.info(
+            f"Starting agent loop | "
+            f"max_iterations={self.max_iterations} | "
+            f"workspace={workspace_directory}"
+        )
 
         for iteration in range(self.max_iterations):
 
@@ -81,7 +92,14 @@ class Loop:
                 user_task=user_task,
             )
 
-            llmresult = self.llm.generate(context)
+            try:
+                llmresult = self.llm.generate(
+                    context,
+                    tools=self.tool_definitions,
+                )
+            except Exception as e:
+                self.logger.error(f"LLM generation failed: {e}")
+                return None
 
             if llmresult is None:
                 self.logger.error("LLM returned None.")
@@ -116,10 +134,15 @@ class Loop:
                     )
                 )
 
+                # Persist STM state when the task finishes.
+                self.memory.saveall()
+
                 return llmresult
 
             self.logger.warning("LLM produced neither response nor tool calls.")
 
         self.logger.warning("Maximum iterations reached.")
+
+        self.memory.saveall()
 
         return None

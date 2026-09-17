@@ -6,7 +6,7 @@ from typing import Any, Dict
 
 from src.utils.logger import get_logger
 from src.models.MemoryEvent import MemoryEvent
-from src.Memory.ShortTermMemory.MemoryCache import MemoryCache
+from src.memory.ShortTermMemory.MemoryCache import MemoryCache
 
 logger = get_logger("[STM]")
 

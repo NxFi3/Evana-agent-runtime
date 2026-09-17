@@ -1,17 +1,16 @@
-#src/Memory/ShortTermMemory/MemoryCache.py
+# src/Memory/ShortTermMemory/MemoryCache.py
 
 import os
 import pickle
-from src.Utils.logger import get_logger
-from src.Memory.MemoryEvent import MemoryEvent
+from src.utils.logger import get_logger
+from src.models.MemoryEvent import MemoryEvent
 
-
-logger = get_logger('[CACHE]')
+logger = get_logger("[CACHE]")
 
 
 class MemoryCache:
 
-    def __init__(self, cache_path: str = 'data/MemoryTemporalCache.pkl'):
+    def __init__(self, cache_path: str = "data/MemoryTemporalCache.pkl"):
 
         self.cache_path = cache_path
         self.database = self._readpath()
@@ -24,23 +23,18 @@ class MemoryCache:
             if not os.path.exists(self.cache_path):
                 return []
 
-            with open(self.cache_path, 'rb') as f:
+            with open(self.cache_path, "rb") as f:
                 database = pickle.load(f)
 
             if not isinstance(database, list):
-                logger.warning('Invalid Cache Database Format')
+                logger.warning("Invalid Cache Database Format")
                 return []
 
-            return [
-                item for item in database
-                if isinstance(item, MemoryEvent)
-            ]
+            return [item for item in database if isinstance(item, MemoryEvent)]
 
         except Exception as e:
 
-            logger.error(
-                f'Error While Reading Cache: {e}'
-            )
+            logger.error(f"Error While Reading Cache: {e}")
 
             return []
 
@@ -53,16 +47,14 @@ class MemoryCache:
             if directory:
                 os.makedirs(directory, exist_ok=True)
 
-            with open(self.cache_path, 'wb') as f:
+            with open(self.cache_path, "wb") as f:
                 pickle.dump(self.database, f)
 
             return True
 
         except Exception as e:
 
-            logger.error(
-                f'Cant Save TemporalCache Error: {e}'
-            )
+            logger.error(f"Cant Save TemporalCache Error: {e}")
 
             return False
 
@@ -80,9 +72,7 @@ class MemoryCache:
 
         except Exception as e:
 
-            logger.error(
-                f'Cannot Flush Cache From Disk: {e}'
-            )
+            logger.error(f"Cannot Flush Cache From Disk: {e}")
 
             return False
 
@@ -102,9 +92,7 @@ class MemoryCache:
 
         if not isinstance(memory, MemoryEvent):
 
-            logger.warning(
-                f'Invalid Format Type: {type(memory)}'
-            )
+            logger.warning(f"Invalid Format Type: {type(memory)}")
 
             return False
 
@@ -114,7 +102,7 @@ class MemoryCache:
         if self.counts % 10 == 0:
 
             if self.SaveTemporalCache():
-                logger.info('Saving Cache')
+                logger.info("Saving Cache")
 
         return True
 

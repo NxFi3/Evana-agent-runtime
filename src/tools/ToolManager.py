@@ -1,10 +1,10 @@
 from typing import Any
 
 from src.models.ToolResult import ToolResult
-from src.Tools.ToolDispatcher import ToolDispatcher
-from src.Tools.ToolRegistry import ToolRegistry
-from src.Utils.logger import get_logger
-from src.Security.securityService import security  # NotImplemented
+from src.tools.ToolDispatcher import ToolDispatcher
+from src.tools.ToolRegistry import ToolRegistry
+from src.utils.logger import get_logger
+from src.security.securityService import security  # NotImplemented
 
 
 class ToolManager:
