@@ -145,7 +145,15 @@ class Loop:
         llmresult: LLMResult,
     ) -> None:
 
-        tool_result = self.tool.execute(llmresult.tool_calls)
+        tool_calls = llmresult.tool_calls or []
+
+        if not tool_calls:
+            self.logger.info("No tool calls to execute.")
+            return
+
+        self.logger.info(f"Executing {len(tool_calls)} tool call(s)")
+
+        tool_result = self.tool.execute(tool_calls)
 
         calls = tool_result.get(
             "calls",
@@ -157,11 +165,58 @@ class Loop:
             [],
         )
 
+        # Log every parsed tool call
         for call in calls:
+
+            tool_name = getattr(
+                call,
+                "name",
+                "unknown",
+            )
+
+            args = getattr(
+                call,
+                "args",
+                {},
+            )
+
+            valid = getattr(
+                call,
+                "valid",
+                False,
+            )
+
+            approved = getattr(
+                call,
+                "approved",
+                False,
+            )
+
+            self.logger.info(
+                f"Tool call → {tool_name} "
+                f"| valid={valid} "
+                f"| approved={approved} "
+                f"| args={args}"
+            )
 
             self.memory.step(self._tool_call_to_event(call))
 
+        # Log every tool result
         for result in results:
+
+            tool_name = getattr(
+                result,
+                "name",
+                "unknown",
+            )
+
+            success = getattr(
+                result,
+                "success",
+                False,
+            )
+
+            self.logger.info(f"Tool result ← {tool_name} " f"| success={success}")
 
             self.memory.step(self._tool_result_to_event(result))
 
