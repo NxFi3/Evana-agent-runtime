@@ -1,7 +1,7 @@
-# src/Tools/ToolRegistry.py
 from pathlib import Path
 import importlib
 import inspect
+
 from src.utils.logger import get_logger
 from src.tools.Tool import Tool
 
@@ -17,6 +17,10 @@ class ToolRegistry:
 
         discovered_tools = []
 
+        if not self.tools_path.exists():
+            self.logger.error(f"Tools directory does not exist: {self.tools_path}")
+            return discovered_tools
+
         for item in self.tools_path.iterdir():
 
             if not item.is_dir():
@@ -26,7 +30,8 @@ class ToolRegistry:
                 continue
 
             self.logger.info(f"Found tool package: {item.name}")
-            module_name = f"src.Tools.builtin.{item.name}"
+
+            module_name = f"src.tools.builtin.{item.name}"
 
             try:
                 module = importlib.import_module(module_name)
@@ -38,34 +43,41 @@ class ToolRegistry:
             self.logger.info(f"Loaded module: {module}")
 
             if not hasattr(module, "__all__"):
-                self.logger.warning(f"Skipping '{item.name}': " f"__all__ not found")
+                self.logger.warning(f"Skipping '{item.name}': " "__all__ not found")
                 continue
 
             self.logger.info(f"Exports: {module.__all__}")
 
             for export_name in module.__all__:
-                obj = getattr(module, export_name, None)
+
+                obj = getattr(
+                    module,
+                    export_name,
+                    None,
+                )
 
                 if obj is None:
                     self.logger.warning(
-                        f"Skipping '{export_name}': " f"not found in module"
+                        f"Skipping '{export_name}': " "not found in module"
                     )
                     continue
 
                 if not inspect.isclass(obj):
-                    self.logger.warning(f"Skipping '{export_name}': " f"not a class")
+                    self.logger.warning(f"Skipping '{export_name}': " "not a class")
                     continue
+
                 if not issubclass(obj, Tool):
-                    self.logger.warning(f"Skipping '{export_name}': " f"not a Tool")
+                    self.logger.warning(f"Skipping '{export_name}': " "not a Tool")
                     continue
 
                 if inspect.isabstract(obj):
                     self.logger.warning(
-                        f"Skipping '{export_name}': " f"Tool is abstract"
+                        f"Skipping '{export_name}': " "Tool is abstract"
                     )
                     continue
 
                 self.logger.info(f"Found Tool class: {obj}")
+
                 try:
                     tool = obj()
 
@@ -73,7 +85,13 @@ class ToolRegistry:
                     self.logger.error(f"Failed to instantiate " f"'{export_name}': {e}")
                     continue
 
-                self.logger.info(f"Instantiated: " f"{tool.name}")
+                if not getattr(tool, "name", None):
+                    self.logger.warning(
+                        f"Skipping '{export_name}': " "tool has no name"
+                    )
+                    continue
+
+                self.logger.info(f"Instantiated: {tool.name}")
 
                 discovered_tools.append(tool)
 
@@ -83,14 +101,22 @@ class ToolRegistry:
         discovered_tools = self._discover_tools()
 
         for tool in discovered_tools:
-            self.tools[tool.name.lower()] = tool
+            self.tools[str(tool.name).strip().lower()] = tool
 
-        self.logger.info(f"Discovered {len(discovered_tools)} tool(s)")
+        self.logger.info(f"Discovered " f"{len(self.tools)} unique tool(s)")
+
+        return list(self.tools.keys())
 
     def is_available(self, toolname: str):
+        if not isinstance(toolname, str):
+            return False
+
         return toolname.strip().lower() in self.tools
 
     def get(self, toolname: str):
+        if not isinstance(toolname, str):
+            return None
+
         return self.tools.get(toolname.strip().lower())
 
     def get_definitions(self):

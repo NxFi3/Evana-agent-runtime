@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Any
+import json
 
 from src.context.compactor import Compactor
 from src.context.contextwindow import ContextWindow
@@ -45,20 +46,11 @@ class ContextBuilder:
     def _build_conversation(
         self,
         events: list[MemoryEvent],
-    ) -> list[dict[str, str]]:
+    ) -> list[dict[str, Any]]:
 
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, Any]] = []
 
         for event in events:
-
-            if not event.content:
-                continue
-
-            source = getattr(
-                event,
-                "source",
-                "",
-            )
 
             event_type = getattr(
                 event,
@@ -66,20 +58,139 @@ class ContextBuilder:
                 "",
             )
 
-            # User messages
-            if source == "user" or event_type == "user_input":
+            source = getattr(
+                event,
+                "source",
+                "",
+            )
 
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": event.content,
-                    }
+            metadata = getattr(
+                event,
+                "metadata",
+                {},
+            )
+
+            if not isinstance(
+                metadata,
+                dict,
+            ):
+                metadata = {}
+
+            if (
+                source == "assistant"
+                and event_type == "assistant"
+                and isinstance(
+                    metadata.get("llm_message"),
+                    dict,
                 )
+            ):
+
+                llm_message = dict(metadata["llm_message"])
+
+                role = llm_message.get(
+                    "role",
+                    "assistant",
+                )
+
+                if role == "assistant":
+
+                    message = {
+                        "role": "assistant",
+                        "content": (llm_message.get("content") or ""),
+                    }
+
+                    if llm_message.get("thinking"):
+                        message["thinking"] = llm_message["thinking"]
+
+                    tool_calls = llm_message.get("tool_calls")
+
+                    if tool_calls:
+                        message["tool_calls"] = tool_calls
+
+                    messages.append(message)
+
+                    continue
+
+            if event_type == "tool_result":
+
+                content = getattr(
+                    event,
+                    "content",
+                    "",
+                )
+
+                tool_name = ""
+
+                if isinstance(
+                    content,
+                    dict,
+                ):
+                    tool_name = str(content.get("name", ""))
+
+                    result_content = content.get(
+                        "content",
+                        "",
+                    )
+
+                else:
+                    result_content = content
+
+                if isinstance(
+                    result_content,
+                    str,
+                ):
+                    tool_content = result_content
+                else:
+                    tool_content = json.dumps(
+                        result_content,
+                        ensure_ascii=False,
+                        default=str,
+                    )
+
+                message = {
+                    "role": "tool",
+                    "content": tool_content,
+                }
+
+                if tool_name:
+                    message["tool_name"] = tool_name
+
+                messages.append(message)
 
                 continue
 
-            # Assistant messages
-            # Tool/agent events are represented separately.
+            content = getattr(
+                event,
+                "content",
+                "",
+            )
+
+            if source == "user" or event_type == "user_input":
+
+                if content is None:
+                    continue
+
+                if not isinstance(
+                    content,
+                    str,
+                ):
+                    content = json.dumps(
+                        content,
+                        ensure_ascii=False,
+                        default=str,
+                    )
+
+                if content.strip():
+
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": content,
+                        }
+                    )
+
+                continue
+
             if source in {
                 "assistant",
                 "llm",
@@ -89,12 +200,27 @@ class ContextBuilder:
                 "tool_result",
             }:
 
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": event.content,
-                    }
-                )
+                if content is None:
+                    continue
+
+                if not isinstance(
+                    content,
+                    str,
+                ):
+                    content = json.dumps(
+                        content,
+                        ensure_ascii=False,
+                        default=str,
+                    )
+
+                if content.strip():
+
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": content,
+                        }
+                    )
 
         return messages
 
@@ -124,7 +250,11 @@ class ContextBuilder:
                     "source",
                     "",
                 ),
-                "content": event.content,
+                "content": getattr(
+                    event,
+                    "content",
+                    "",
+                ),
                 "step": getattr(
                     event,
                     "step",
@@ -164,7 +294,11 @@ class ContextBuilder:
                     "source",
                     "",
                 ),
-                "content": event.content,
+                "content": getattr(
+                    event,
+                    "content",
+                    "",
+                ),
                 "step": getattr(
                     event,
                     "step",
@@ -259,7 +393,45 @@ class ContextBuilder:
             ).strip(),
         }
 
-        return [merged_system]
+        # IMPORTANT:
+        # Preserve the latest tool protocol chain.
+        #
+        # We do not want compaction to delete:
+        # assistant(tool_calls)
+        # tool(result)
+        #
+        # because the next Ollama request depends on it.
+
+        preserved_protocol = []
+
+        last_tool_index = -1
+
+        for index, message in enumerate(messages):
+            if message.get("role") == "tool":
+                last_tool_index = index
+
+        if last_tool_index >= 0:
+
+            assistant_index = -1
+
+            for index in range(
+                last_tool_index,
+                -1,
+                -1,
+            ):
+                message = messages[index]
+
+                if message.get("role") == "assistant" and message.get("tool_calls"):
+                    assistant_index = index
+                    break
+
+            if assistant_index >= 0:
+                preserved_protocol = messages[assistant_index : last_tool_index + 1]
+
+        return [
+            merged_system,
+            *preserved_protocol,
+        ]
 
     def _compact_observation(
         self,
@@ -320,7 +492,7 @@ class ContextBuilder:
                 "role": "system",
                 "content": new_content,
             },
-            *[message for message in messages[1:] if message.get("role") != "system"],
+            *[message for message in messages if message.get("role") != "system"],
         ]
 
     def _fit_messages(
@@ -345,17 +517,16 @@ class ContextBuilder:
         system_message = system_messages[0]
 
         if not self.tokenbudget.fits([system_message]):
-
             return [
                 {
                     "role": "system",
-                    "content": self._minimal_system_context(),
+                    "content": (self._minimal_system_context()),
                 }
             ]
 
         selected: list[dict[str, Any]] = []
 
-        # Keep the newest messages first.
+        # Newest messages first.
         for message in reversed(other_messages):
 
             candidate = [
@@ -386,11 +557,9 @@ class ContextBuilder:
         sections: list[str] = []
 
         if self.system_instruction:
-
             sections.append(self.system_instruction)
 
         if self.window.task:
-
             sections.append(
                 ContextWindow._section(
                     "task",
@@ -399,7 +568,6 @@ class ContextBuilder:
             )
 
         if self.window.progress:
-
             sections.append(
                 ContextWindow._section(
                     "progress",
@@ -408,7 +576,6 @@ class ContextBuilder:
             )
 
         if self.window.last_action:
-
             sections.append(
                 ContextWindow._section(
                     "last_action",
@@ -456,13 +623,13 @@ class ContextBuilder:
         if self.tokenbudget.fits(messages):
             return messages
 
-        # 3. Compact tool observation
+        # 3. Compact observation
         messages = self._compact_observation(messages)
 
         if self.tokenbudget.fits(messages):
             return messages
 
-        # 4. Drop old messages until context fits
+        # 4. Drop old messages
         messages = self._fit_messages(messages)
 
         if self.tokenbudget.fits(messages):
@@ -472,6 +639,6 @@ class ContextBuilder:
         return [
             {
                 "role": "system",
-                "content": self._minimal_system_context(),
+                "content": (self._minimal_system_context()),
             }
         ]
