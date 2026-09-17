@@ -3,21 +3,27 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from src.tools.Tool import Tool
 from src.models.ToolResult import ToolResult
+from src.tools.Tool import Tool
 
 
 class ReadFile(Tool):
     """
-    Read files or list directories for the Evana agent runtime.
+    Read a UTF-8 text file.
 
-    The result is returned through ToolResult.content as a structured,
-    JSON-compatible dictionary so it can be inserted directly into
-    the agent context.
+    This tool is intentionally file-only.
+
+    Use command_exec for:
+        - listing directories
+        - searching files
+        - inspecting the workspace
+        - running commands
+
+    Output is structured through ToolResult.content and bounded to
+    prevent unnecessarily large context payloads.
     """
 
     name = "read_file"
-
     action = "inspect"
 
     DEFAULT_MAX_OUTPUT_CHARS = 8_000
@@ -25,9 +31,11 @@ class ReadFile(Tool):
     MIN_OUTPUT_CHARS = 512
 
     description = (
-        "Read a text file or list a directory. "
-        "For files, optional start_line and end_line can limit the returned "
-        "range. Output is bounded to protect agent context."
+        "Read a UTF-8 text file. "
+        "Optional start_line and end_line can limit the returned range. "
+        "Output is bounded to protect agent context. "
+        "Use command_exec to inspect directories, search files, "
+        "or run shell commands."
     )
 
     parameters = {
@@ -35,7 +43,7 @@ class ReadFile(Tool):
         "properties": {
             "file_path": {
                 "type": "string",
-                "description": ("Path to the file or directory to read."),
+                "description": "Path to the text file to read.",
             },
             "start_line": {
                 "type": "integer",
@@ -56,7 +64,7 @@ class ReadFile(Tool):
             "max_output_chars": {
                 "type": "integer",
                 "description": (
-                    "Maximum number of characters returned in content. "
+                    "Maximum number of characters returned. "
                     f"Default: {DEFAULT_MAX_OUTPUT_CHARS}."
                 ),
                 "default": DEFAULT_MAX_OUTPUT_CHARS,
@@ -68,7 +76,6 @@ class ReadFile(Tool):
         "additionalProperties": False,
     }
 
-    # PUBLIC API
     def execute(
         self,
         file_path: str,
@@ -99,29 +106,49 @@ class ReadFile(Tool):
         except OSError as exc:
             return self._error(
                 error_type="path_error",
-                message=f"Could not resolve path: {exc}",
+                message=f"Could not resolve path '{file_path}': {exc}",
             )
 
-        if path.is_file():
-            return self._read_file(
-                path=path,
-                start_line=start_line,
-                end_line=end_line,
-                max_output_chars=max_output_chars,
+        if not path.exists():
+            return self._error(
+                error_type="not_found",
+                message=f"File not found: {path}",
+                extra={
+                    "path": str(path),
+                    "type": "file",
+                },
             )
 
         if path.is_dir():
-            return self._read_directory(
-                path=path,
-                max_output_chars=max_output_chars,
+            return self._error(
+                error_type="invalid_target",
+                message=(
+                    f"'{path}' is a directory, not a file. "
+                    "Use command_exec to inspect directory contents."
+                ),
+                extra={
+                    "path": str(path),
+                    "type": "directory",
+                },
             )
 
-        return self._error(
-            error_type="not_found",
-            message=f"File or directory not found: {file_path}",
+        if not path.is_file():
+            return self._error(
+                error_type="invalid_target",
+                message=f"'{path}' is not a regular file.",
+                extra={
+                    "path": str(path),
+                    "type": "other",
+                },
+            )
+
+        return self._read_file(
+            path=path,
+            start_line=start_line,
+            end_line=end_line,
+            max_output_chars=max_output_chars,
         )
 
-    # VALIDATION
     def _validate_arguments(
         self,
         *,
@@ -144,7 +171,7 @@ class ReadFile(Tool):
             )
 
         if start_line is not None:
-            if not isinstance(start_line, int):
+            if type(start_line) is not int:
                 return self._error(
                     error_type="invalid_argument",
                     message="start_line must be an integer.",
@@ -157,7 +184,7 @@ class ReadFile(Tool):
                 )
 
         if end_line is not None:
-            if not isinstance(end_line, int):
+            if type(end_line) is not int:
                 return self._error(
                     error_type="invalid_argument",
                     message="end_line must be an integer.",
@@ -172,10 +199,10 @@ class ReadFile(Tool):
         if start_line is not None and end_line is not None and start_line > end_line:
             return self._error(
                 error_type="invalid_argument",
-                message=("start_line must be less than or equal to end_line."),
+                message="start_line must be <= end_line.",
             )
 
-        if not isinstance(max_output_chars, int):
+        if type(max_output_chars) is not int:
             return self._error(
                 error_type="invalid_argument",
                 message="max_output_chars must be an integer.",
@@ -193,7 +220,6 @@ class ReadFile(Tool):
 
         return None
 
-    # FILE
     def _read_file(
         self,
         *,
@@ -204,18 +230,15 @@ class ReadFile(Tool):
     ) -> ToolResult:
 
         try:
-            with open(
-                path,
-                "r",
+            lines = path.read_text(
                 encoding="utf-8",
                 errors="strict",
-            ) as file:
-                lines = file.readlines()
+            ).splitlines(keepends=True)
 
         except UnicodeDecodeError:
             return self._error(
                 error_type="binary_or_non_utf8",
-                message=f"Cannot read non-UTF-8/binary file: {path}",
+                message=f"Cannot read non-UTF-8 or binary file: {path}",
                 extra={
                     "path": str(path),
                     "type": "file",
@@ -244,29 +267,28 @@ class ReadFile(Tool):
 
         total_lines = len(lines)
 
-        # Empty file
         if total_lines == 0:
-            return ToolResult(
-                success=True,
-                name=self.name,
-                content={
-                    "success": True,
-                    "type": "file",
-                    "path": str(path),
-                    "content": "",
-                    "start_line": None,
-                    "end_line": None,
-                    "lines_returned": 0,
-                    "total_lines": 0,
-                    "truncated": False,
-                },
-                metadata={},
+            return self._success(
+                path=path,
+                content="",
+                start_line=None,
+                end_line=None,
+                lines_requested=0,
+                lines_returned=0,
+                total_lines=0,
+                truncated=False,
+                max_output_chars=max_output_chars,
             )
 
-        # Resolve requested range
         actual_start = 1 if start_line is None else start_line
-
-        actual_end = total_lines if end_line is None else end_line
+        actual_end = (
+            total_lines
+            if end_line is None
+            else min(
+                end_line,
+                total_lines,
+            )
+        )
 
         if actual_start > total_lines:
             return self._error(
@@ -282,167 +304,53 @@ class ReadFile(Tool):
                 },
             )
 
-        actual_end = min(
-            actual_end,
-            total_lines,
-        )
-
-        start_index = actual_start - 1
-        end_index = actual_end
-
-        selected_lines = lines[start_index:end_index]
+        selected_lines = lines[actual_start - 1 : actual_end]
 
         raw_content = "".join(selected_lines)
-
-        # Bound content
 
         bounded_content, truncated = self._truncate(
             raw_content,
             max_output_chars,
         )
 
-        # Count actual lines represented in returned content.
         if truncated:
             lines_returned = self._estimate_visible_lines(bounded_content)
         else:
             lines_returned = len(selected_lines)
 
-        return ToolResult(
-            success=True,
-            name=self.name,
-            content={
-                "success": True,
-                "type": "file",
-                "path": str(path),
-                "content": bounded_content,
-                "start_line": actual_start,
-                "end_line": actual_end,
-                "lines_requested": actual_end - actual_start + 1,
-                "lines_returned": lines_returned,
-                "total_lines": total_lines,
-                "truncated": truncated,
-                "max_output_chars": max_output_chars,
-            },
-            metadata={},
+        return self._success(
+            path=path,
+            content=bounded_content,
+            start_line=actual_start,
+            end_line=actual_end,
+            lines_requested=actual_end - actual_start + 1,
+            lines_returned=lines_returned,
+            total_lines=total_lines,
+            truncated=truncated,
+            max_output_chars=max_output_chars,
         )
 
-    # DIRECTORY
-    def _read_directory(
-        self,
-        *,
-        path: Path,
-        max_output_chars: int,
-    ) -> ToolResult:
-
-        try:
-            entries = sorted(
-                path.iterdir(),
-                key=lambda item: (
-                    not item.is_dir(),
-                    item.name.lower(),
-                ),
-            )
-        except PermissionError:
-            return self._error(
-                error_type="permission_error",
-                message=f"Permission denied: {path}",
-                extra={
-                    "path": str(path),
-                    "type": "directory",
-                },
-            )
-        except OSError as exc:
-            return self._error(
-                error_type="read_error",
-                message=f"Could not read directory '{path}': {exc}",
-                extra={
-                    "path": str(path),
-                    "type": "directory",
-                },
-            )
-
-        items: list[dict[str, str]] = []
-
-        for entry in entries:
-            items.append(
-                {
-                    "name": entry.name,
-                    "type": (
-                        "directory"
-                        if entry.is_dir()
-                        else "file" if entry.is_file() else "other"
-                    ),
-                }
-            )
-
-        # Build bounded listing
-        visible_items: list[dict[str, str]] = []
-        used_chars = 0
-        truncated = False
-
-        for item in items:
-            line = f"{item['type']}: {item['name']}"
-
-            # +1 accounts for newline.
-            required = len(line) + 1
-
-            if used_chars + required > max_output_chars:
-                truncated = True
-                break
-
-            visible_items.append(item)
-            used_chars += required
-
-        listing = "\n".join(f"{item['type']}: {item['name']}" for item in visible_items)
-
-        if truncated:
-            remaining = len(items) - len(visible_items)
-
-            marker = f"\n\n... {remaining} item(s) omitted ..."
-
-            listing, _ = self._truncate(
-                listing + marker,
-                max_output_chars,
-            )
-
-        return ToolResult(
-            success=True,
-            name=self.name,
-            content={
-                "success": True,
-                "type": "directory",
-                "path": str(path),
-                "content": listing,
-                "total_entries": len(entries),
-                "entries_returned": len(visible_items),
-                "truncated": truncated,
-                "max_output_chars": max_output_chars,
-            },
-            metadata={},
-        )
-
-    # OUTPUT
     @staticmethod
     def _truncate(
         value: str,
         limit: int,
     ) -> tuple[str, bool]:
 
-        value = value or ""
-
         if len(value) <= limit:
             return value, False
 
         head = int(limit * 0.70)
-
         tail = limit - head
 
         omitted = len(value) - head - tail
 
+        marker = (
+            f"... {omitted} characters omitted; "
+            "use start_line/end_line to inspect a narrower range ..."
+        )
+
         bounded = (
-            value[:head].rstrip() + "\n\n" + f"... {omitted} characters omitted; "
-            "use start_line/end_line to inspect a narrower range ...\n\n"
-            + value[-tail:].lstrip()
+            value[:head].rstrip() + "\n\n" + marker + "\n\n" + value[-tail:].lstrip()
         )
 
         return bounded, True
@@ -456,7 +364,39 @@ class ReadFile(Tool):
 
         return len(content.splitlines())
 
-    # RESULTS
+    def _success(
+        self,
+        *,
+        path: Path,
+        content: str,
+        start_line: int | None,
+        end_line: int | None,
+        lines_requested: int,
+        lines_returned: int,
+        total_lines: int,
+        truncated: bool,
+        max_output_chars: int,
+    ) -> ToolResult:
+
+        return ToolResult(
+            success=True,
+            name=self.name,
+            content={
+                "success": True,
+                "type": "file",
+                "path": str(path),
+                "content": content,
+                "start_line": start_line,
+                "end_line": end_line,
+                "lines_requested": lines_requested,
+                "lines_returned": lines_returned,
+                "total_lines": total_lines,
+                "truncated": truncated,
+                "max_output_chars": max_output_chars,
+            },
+            metadata={},
+        )
+
     def _error(
         self,
         *,
