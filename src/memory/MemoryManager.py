@@ -54,24 +54,44 @@ class MemoryManager:
         self.queue = self._load_queue_cache()
         self.tick = 0
 
+    def _memory_config(self) -> dict[str, Any]:
+        nested = self.config.get("memory")
+
+        if isinstance(nested, dict):
+            return nested
+
+        return {}
+
+    def _config_value(
+        self,
+        key: str,
+        default: Any,
+    ) -> Any:
+        memory_config = self._memory_config()
+
+        if key in memory_config:
+            return memory_config[key]
+
+        return self.config.get(key, default)
+
     def _init_memory_cache(self) -> MemoryCache:
-        cache_path = self.config.get(
+        cache_path = self._config_value(
             "memorycachepath",
             "data/MemoryTemporalCache.pkl",
         )
 
-        return MemoryCache(cache_path)
+        return MemoryCache(str(cache_path))
 
     def _init_database(self) -> DBManager:
-        db_path = self.config.get(
+        db_path = self._config_value(
             "db_path",
             "data/ltm_database.db",
         )
 
-        return DBManager(db_path)
+        return DBManager(str(db_path))
 
     def _init_retrieval(self) -> Retrieval:
-        index_path = self.config.get(
+        index_path = self._config_value(
             "index_path",
             "data/vectors.faiss",
         )
@@ -80,11 +100,11 @@ class MemoryManager:
             self.embedding,
             self.reranker,
             self.db,
-            index_path,
+            str(index_path),
         )
 
     def _load_queue_cache(self) -> list[int]:
-        cache_path = self.config.get(
+        cache_path = self._config_value(
             "queuecache",
             "queuecache.pkl",
         )
