@@ -1,6 +1,8 @@
 # src/Memory/MemoryConsolidator.py
 
+import json
 from typing import List
+
 from src.utils.logger import get_logger
 from src.memory.Retrieval import Retrieval
 from src.engine.LlmProviderManager import LlmProvider
@@ -43,39 +45,64 @@ class MemoryConsolidator:
         self.source_scores = source_scores
         self.parser = parser
 
+    @staticmethod
+    def _event_content(event: MemoryEvent) -> str:
+        content = event.content
+
+        if isinstance(content, str):
+            return content.strip()
+
+        if content is None:
+            return ""
+
+        try:
+            return json.dumps(
+                content,
+                ensure_ascii=False,
+                default=str,
+            ).strip()
+        except Exception:
+            return str(content).strip()
+
     def _Candidates(self, data: List[MemoryEvent]):
 
         ranked = []
 
-        data = [
-            event
-            for event in data
-            if isinstance(event, MemoryEvent)
-            and event.content is not None
-            and event.content.strip()
-        ]
+        normalized_events = []
 
-        for item in data:
+        for event in data:
+            if not isinstance(event, MemoryEvent):
+                continue
 
-            type_score = self.type_scores.get(item.event_type.lower(), 0.0)
+            content = self._event_content(event)
 
-            source_score = self.source_scores.get(item.source.lower(), 0.0)
+            if not content:
+                continue
+
+            normalized_events.append((event, content))
+
+        for event, content in normalized_events:
+
+            type_score = self.type_scores.get(event.event_type.lower(), 0.0)
+
+            source_score = self.source_scores.get(event.source.lower(), 0.0)
 
             score = 0.5 * type_score + 0.5 * source_score
 
-            ranked.append((item, score))
+            ranked.append((event, content, score))
 
-        ranked.sort(key=lambda x: x[1], reverse=True)
+        ranked.sort(key=lambda x: x[2], reverse=True)
 
         results = []
 
-        for event, rank_score in ranked:
+        for event, content, rank_score in ranked:
 
-            nearest = self.retrieval.get_nearest_memory(event.content)
+            nearest = self.retrieval.get_nearest_memory(content)
 
             results.append(
                 {
                     "event": event,
+                    "content": content,
                     "rank_score": rank_score,
                     "related_memory": (
                         {"id": nearest["id"], "similarity": nearest["similarity"]}
@@ -89,19 +116,29 @@ class MemoryConsolidator:
 
     def _ContextBuild(self, data: list):
 
-        context = "\n\n".join(
+        context = "
+
+".join(
             (
-                f"Content: {item['event'].content}\n"
-                f"Event Type: {item['event'].event_type}\n"
-                f"Source: {item['event'].source}\n"
-                f"Score: {item['rank_score']:.3f}\n"
+                f"Content: {item['content']}
+"
+                f"Event Type: {item['event'].event_type}
+"
+                f"Source: {item['event'].source}
+"
+                f"Score: {item['rank_score']:.3f}
+"
                 f"Similarity: "
                 f"{item['related_memory']['similarity']:.3f}"
                 if item["related_memory"]
-                else f"Content: {item['event'].content}\n"
-                f"Event Type: {item['event'].event_type}\n"
-                f"Source: {item['event'].source}\n"
-                f"Score: {item['rank_score']:.3f}\n"
+                else f"Content: {item['content']}
+"
+                f"Event Type: {item['event'].event_type}
+"
+                f"Source: {item['event'].source}
+"
+                f"Score: {item['rank_score']:.3f}
+"
                 f"Similarity: None"
             )
             for item in data
@@ -123,6 +160,8 @@ class MemoryConsolidator:
 
         prompt = build_decision_prompt(context)
 
-        response = self.llmprovider.generate([{"role": "system", "content": prompt}])
-        response = response.response
-        return self.parser.parse(response)
+        response = self.llmprovider.generate(
+            [{"role": "system", "content": prompt}]
+        )
+
+        return self.parser.parse(response.response)
