@@ -1,0 +1,14 @@
+#src/Engine/llmManagment/ProvidersInput.py 
+
+from dataclasses import dataclass, field
+from typing import Dict , Any
+import numpy as np
+
+
+@dataclass
+class LLMInput:
+    model_name: str
+    messages:list[Dict[str, Any]]
+    tools: list[Dict] = field(default_factory=list)
+    images: list[np.ndarray] = field(default_factory=list)
+    options: Dict = field(default_factory=dict)
