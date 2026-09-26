@@ -10,17 +10,23 @@ Message = dict[str, Any]
 
 class ContextWindow:
     """
-    Model-visible prompt = ONE stable system message + the real chat history.
+    Builds the final model-visible context.
 
-    The system message contains only the static instruction and the runtime
-    info (os / cwd / workspace). Everything that changes between iterations
-    (user turns, assistant turns, tool calls, tool results) lives in the
-    message list, so the model sees a normal chat and Ollama can reuse the
-    prompt prefix instead of re-processing everything on every iteration.
+    Structure:
+
+        system message
+            ├── static instruction
+            └── runtime information
+
+        conversation
+            ├── user messages
+            ├── assistant messages
+            └── tool results
+
+    ContextWindow contains no retrieval logic.
     """
 
     def __init__(self) -> None:
-
         self.os_name = platform.system()
 
         self.system_instruction: str = ""
@@ -32,17 +38,24 @@ class ContextWindow:
 
         self.conversation: list[Message] = []
 
+    # ============================================================
+    # System
+    # ============================================================
+
     def set_system(
         self,
         instruction: str,
     ) -> None:
-        self.system_instruction = (instruction or "").strip()
+        self.system_instruction = str(instruction or "").strip()
+
+    # ============================================================
+    # Runtime
+    # ============================================================
 
     def set_runtime(
         self,
         workspace: str | None = None,
     ) -> None:
-
         self.runtime = {
             "os": self.os_name,
             "cwd": str(Path.cwd()),
@@ -51,21 +64,43 @@ class ContextWindow:
         if workspace:
             self.runtime["workspace"] = str(Path(workspace).expanduser().resolve())
 
+    def set_execution_context(
+        self,
+        execution_context: str | None,
+    ) -> None:
+        """
+        Add dynamic execution state to runtime.
+
+        This is replaced on every build, never accumulated.
+        """
+
+        if execution_context:
+            self.runtime["execution_context"] = execution_context
+        else:
+            self.runtime.pop(
+                "execution_context",
+                None,
+            )
+
+    # ============================================================
+    # Conversation
+    # ============================================================
+
     def set_conversation(
         self,
         content: list[Message],
     ) -> None:
-        self.conversation = content or []
+        self.conversation = list(content or [])
+
+    # ============================================================
+    # Serialization
+    # ============================================================
 
     @staticmethod
     def _serialize(
         content: Any,
     ) -> str:
-
-        if isinstance(
-            content,
-            str,
-        ):
+        if isinstance(content, str):
             return content
 
         return json.dumps(
@@ -81,13 +116,13 @@ class ContextWindow:
         name: str,
         content: Any,
     ) -> str:
-
         return f"<{name}>\n" f"{cls._serialize(content)}\n" f"</{name}>"
 
-    def build_system_content(
-        self,
-    ) -> str:
+    # ============================================================
+    # System content
+    # ============================================================
 
+    def build_system_content(self) -> str:
         sections: list[str] = []
 
         if self.system_instruction:
@@ -102,10 +137,7 @@ class ContextWindow:
 
         return "\n\n".join(sections)
 
-    def get_prompt(
-        self,
-    ) -> list[Message]:
-
+    def get_prompt(self) -> list[Message]:
         messages: list[Message] = []
 
         system_content = self.build_system_content()
